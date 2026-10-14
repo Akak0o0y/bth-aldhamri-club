@@ -1,0 +1,17 @@
+{
+  "name": "majlis-realtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Chat, reactions, poll and voice roster relay for مجلس ظمرة",
+  "type": "module",
+  "main": "realtime.js",
+  "scripts": {
+    "start": "node realtime.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

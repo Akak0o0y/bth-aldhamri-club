@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "majlis-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5173", "--strictPort"],
+      "port": 5173
+    },
+    {
+      "name": "majlis-realtime",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/realtime.js"],
+      "port": 8787
+    },
+    {
+      "name": "majlis-dev-rt",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5176", "--strictPort"],
+      "port": 5176
+    }
+  ]
+}

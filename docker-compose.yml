@@ -1,0 +1,30 @@
+# Docker Compose for running مجلس ظمرة services in the cloud
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: majlis-mediamtx
+    restart: unless-stopped
+    ports:
+      - "8889:8889" # WebRTC HTTP (WHIP / WHEP)
+      - "8189:8189/udp" # WebRTC ICE UDP
+    environment:
+      - MTX_WEBRTC=yes
+      - MTX_WEBRTCADDRESS=:8889
+      - MTX_WEBRTCALLOWORIGINS=*
+      - MTX_WEBRTCICESERVERS2=[{"url":"stun:stun.l.google.com:19302"}]
+      - MTX_RTSP=no
+      - MTX_RTMP=no
+      - MTX_HLS=no
+      - MTX_SRT=no
+
+  realtime:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: majlis-realtime
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - ALLOWED_ORIGINS=*

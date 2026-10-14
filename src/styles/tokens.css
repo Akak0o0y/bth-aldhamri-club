@@ -1,0 +1,63 @@
+/* مجلس ظمرة — design tokens
+   Calm: black, white and dark blue. One accent, muted surfaces.
+   Red appears only on the live dot. */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #04060b;
+  --bg-2: #070b14;
+  --surface: rgb(10 15 28 / 0.78);
+  --surface-solid: #0a0f1c;
+  --surface-2: #0f1626;
+  --surface-3: #162036;
+  --line: rgb(255 255 255 / 0.06);
+  --line-2: rgb(255 255 255 / 0.1);
+  --line-3: rgb(255 255 255 / 0.18);
+
+  --text: #f4f6fb;
+  --text-2: #a3adc2;
+  --text-3: #667089;
+  --ink: #05070d;
+
+  --accent: #1e3a8a;
+  --accent-2: #2a4db3;
+  --accent-hi: #8ea8ff;
+  --accent-tint: rgb(70 110 230 / 0.14);
+  --accent-glow: rgb(70 110 230 / 0.35);
+
+  --live: #e5484d;
+  --good: var(--accent-hi);
+  --mid: #d3d8e4;
+  --bad: #f08a8d;
+
+  --font: 'Readex Pro', system-ui, -apple-system, 'Segoe UI', Tahoma, sans-serif;
+  --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, monospace;
+
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 24px;
+  --r-full: 999px;
+
+  --shadow-1: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px -20px rgb(0 0 0 / 0.8);
+  --shadow-2: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 30px 80px -30px rgb(0 0 0 / 0.95);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 380ms;
+
+  --header-h: 64px;
+  --chat-w: 372px;
+  --gutter: clamp(12px, 2vw, 24px);
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --ease-spring: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 19.4%, 1.067, 1.099 24.3%, 1.108 26%, 1.1, 1.077 30.6%, 1.018 35.4%, 0.996 39%, 0.989 41.5%, 0.99 45.7%, 1.001 55.4%, 1.003 62.1%, 1);
+  }
+}
