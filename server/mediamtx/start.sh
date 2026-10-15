@@ -7,13 +7,11 @@
 set -eu
 : "${ICE_HOST:?set ICE_HOST to the TCP proxy domain}"
 : "${ICE_PORT:?set ICE_PORT to the TCP proxy public port}"
-: "${PUBLISH_USER:?set PUBLISH_USER}"
-: "${PUBLISH_PASS:?set PUBLISH_PASS}"
+: "${AUTH_URL:?set AUTH_URL to the relay /mtx/auth URL with its key}"
 
 sed -e "s|__ICE_HOST__|$ICE_HOST|" \
     -e "s|__ICE_PORT__|$ICE_PORT|" \
-    -e "s|__PUBLISH_USER__|$PUBLISH_USER|" \
-    -e "s|__PUBLISH_PASS__|$PUBLISH_PASS|" \
+    -e "s|__AUTH_URL__|$AUTH_URL|" \
     /mediamtx.tmpl.yml > /tmp/mediamtx.yml
 
 if [ "$ICE_PORT" != 8189 ]; then

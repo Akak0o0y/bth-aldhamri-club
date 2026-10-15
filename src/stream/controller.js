@@ -2,6 +2,7 @@
 // the UI reads from. Only one peer connection is alive at a time: a host
 // stops watching while on air, so the machine never decodes and encodes the
 // same stream at once.
+import { authStore, signOut } from '../auth/session';
 import { createStore } from '../lib/store';
 import { prefsStore, setPref, toast } from '../ui/prefs';
 import { VIDEO_CODECS, probeDecoder } from './codecs';
@@ -198,8 +199,11 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
   });
 
   const { config } = streamStore.get();
+  // A logged-in streamer sends their session; otherwise the saved name+password.
+  const { token } = authStore.get();
   const current = new WhipPublisher({
     url: whipUrl(config),
+    token,
     user: config.publishUser,
     pass: config.publishPass,
     stream,
@@ -212,6 +216,7 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
     onStatus: (status, message) => {
       if (status === 'unauthorized') {
         // Say why once and go back to watching instead of a stuck red chip.
+        if (token) signOut();
         toast(message, 'warn');
         stopLive();
         return;

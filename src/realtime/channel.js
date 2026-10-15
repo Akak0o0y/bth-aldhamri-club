@@ -5,6 +5,7 @@ import { createStore, readJSON, writeJSON } from '../lib/store';
 import { soundFX } from '../services/soundEffects';
 import { streamStore } from '../stream/controller';
 import { emitReaction, prefsStore } from '../ui/prefs';
+import { relayUrl } from './relay';
 
 const MAX_MESSAGES = 150;
 const VOTER_KEY = 'majlis.voter.v1';
@@ -12,20 +13,6 @@ const ID = /^[a-z0-9]{6,16}$/;
 
 // crypto.randomUUID needs https; getRandomValues also works on a LAN http page.
 const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, '0')).join('');
-
-export const CLOUD_REALTIME_URL = 'wss://realtime-production-988e.up.railway.app';
-
-// ?rt= overrides for testing, the build bakes in the deployed relay, and a
-// local dev server falls back to the same machine (like the media server).
-function relayUrl() {
-  const param = new URLSearchParams(location.search).get('rt');
-  if (param) return param;
-  if (import.meta.env.VITE_REALTIME_URL) return import.meta.env.VITE_REALTIME_URL;
-  if (location.hostname && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    return CLOUD_REALTIME_URL;
-  }
-  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname || 'localhost'}:8787`;
-}
 
 // Polls allow one vote per device, so the voter id outlives the tab.
 const voter = (() => {

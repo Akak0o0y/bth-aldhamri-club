@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Check, Link2, Radio, Server, Settings2 } from 'lucide-react';
+import { Check, Link2, Radio, Server, Settings2, UserRound } from 'lucide-react';
+import { authStore } from '../auth/session';
 import { useStore } from '../lib/store';
 import { inviteLink } from '../stream/config';
 import { streamStore } from '../stream/controller';
@@ -13,6 +14,7 @@ export default function Header({ onOpen }) {
   const status = useStore(streamStore, (s) => s.status);
   const latency = useStore(streamStore, (s) => s.stats?.latencyMs ?? null);
   const config = useStore(streamStore, (s) => s.config);
+  const account = useStore(authStore, (s) => s.name);
   const [copied, setCopied] = useState(false);
 
   const invite = async () => {
@@ -46,6 +48,15 @@ export default function Header({ onOpen }) {
         <button className="btn btn--ghost topbar__invite" onClick={invite}>
           {copied ? <Check size={17} /> : <Link2 size={17} />}
           <span>{copied ? 'تم النسخ' : 'دعوة'}</span>
+        </button>
+        <button
+          className="btn btn--ghost topbar__invite"
+          onClick={() => onOpen('account')}
+          aria-label={account ? `حسابي: ${account}` : 'دخول المذيعين'}
+          title={account ? `حسابي: ${account}` : 'دخول المذيعين'}
+        >
+          <UserRound size={17} />
+          <span>{account || 'دخول'}</span>
         </button>
         <button className="btn btn--ghost btn--icon" onClick={() => onOpen('guide')} aria-label="سيرفرات البث" title="سيرفرات البث">
           <Server size={18} />

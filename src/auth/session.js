@@ -1,0 +1,82 @@
+// Streamer login. The relay issues a signed session token; it stays on this
+// device and goes out as the Bearer token when going live (MediaMTX asks the
+// relay whether that token may publish). Watching never needs an account.
+import { createStore, readJSON, writeJSON } from '../lib/store';
+import { relayHttpUrl } from '../realtime/relay';
+import { prefsStore, setPref } from '../ui/prefs';
+
+const KEY = 'majlis.auth.v1';
+const GUEST_NAME = 'ضيف المجلس';
+
+const ERRORS = {
+  login: 'اسم المستخدم أو كلمة المرور غير صحيحة',
+  busy: 'محاولات كثيرة — انتظر عشر دقائق ثم حاول مجدداً',
+  name: 'الاسم من 3 إلى 24 حرفاً أو رقماً، ويُسمح بـ _ . -',
+  pass: 'كلمة المرور 8 أحرف على الأقل',
+  taken: 'هذا الاسم مستخدم — اختر اسماً آخر',
+  invite: 'رابط الدعوة غير صالح أو انتهت صلاحيته أو استُخدم من قبل',
+  session: 'انتهت الجلسة — سجّل الدخول من جديد',
+};
+
+export const authStore = createStore(readJSON(KEY, { name: '', token: '' }));
+
+async function call(path, { body, auth } = {}) {
+  let res;
+  try {
+    res = await fetch(`${relayHttpUrl()}${path}`, {
+      method: body ? 'POST' : 'GET',
+      headers: auth ? { Authorization: `Bearer ${authStore.get().token}` } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error('تعذر الوصول إلى السيرفر — تحقق من الاتصال');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (data.error === 'session') signOut();
+    throw new Error(ERRORS[data.error] || `رد السيرفر بالحالة ${res.status}`);
+  }
+  return data;
+}
+
+function signIn({ name, token }) {
+  writeJSON(KEY, { name, token });
+  authStore.set({ name, token });
+  // Chat under the account name unless the viewer already picked one.
+  if (prefsStore.get().username === GUEST_NAME) setPref({ username: name });
+}
+
+export function signOut() {
+  writeJSON(KEY, { name: '', token: '' });
+  authStore.set({ name: '', token: '' });
+}
+
+export async function login(name, pass) {
+  signIn(await call('/api/login', { body: { name: name.trim(), pass } }));
+}
+
+export async function register(code, name, pass) {
+  signIn(await call('/api/register', { body: { code, name: name.trim(), pass } }));
+  // The invite is spent; drop it from the address bar.
+  const url = new URL(location.href);
+  url.searchParams.delete('invite');
+  history.replaceState(null, '', url);
+}
+
+export const lookupInvite = (code) => call(`/api/invites/${encodeURIComponent(code)}`);
+
+export async function createInvite() {
+  const { code, expires } = await call('/api/invites', { body: {}, auth: true });
+  const url = new URL(location.pathname, location.origin);
+  url.searchParams.set('invite', code);
+  return { link: url.toString(), expires };
+}
+
+// A link like ?invite=CODE opens the sign-up form.
+export const inviteCode = () => new URLSearchParams(location.search).get('invite');
+
+// Drops a session the relay no longer accepts (expired or account removed);
+// a network failure keeps it.
+export function checkSession() {
+  if (authStore.get().token) call('/api/me', { auth: true }).catch(() => {});
+}

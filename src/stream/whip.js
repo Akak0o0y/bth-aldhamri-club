@@ -18,7 +18,7 @@ export class WhipPublisher {
   #videoSender = null;
   #auth;
 
-  // opts: { url, user?, pass?, stream, codecId, videoKbps, fps, contentHint, music, audioKbps, onStatus }
+  // opts: { url, token? | user?+pass?, stream, codecId, videoKbps, fps, contentHint, music, audioKbps, onStatus }
   constructor(opts) {
     this.#opts = opts;
     this.#auth = authHeaders(opts);
@@ -157,7 +157,7 @@ export class WhipPublisher {
       if (res.status === 401 || res.status === 403) {
         // Missing or wrong publish password: retrying can't fix that.
         this.#teardown();
-        this.#status('unauthorized', o.user ? 'كلمة مرور البث غير صحيحة — صحّحها من الإعدادات' : 'البث يحتاج اسم مستخدم وكلمة مرور — أدخلها من الإعدادات');
+        this.#status('unauthorized', o.token || o.user ? 'الحساب غير مقبول أو انتهت الجلسة — سجّل الدخول من جديد' : 'البث لأصحاب الحسابات — سجّل الدخول أولاً');
         this.#stopped = true;
         return;
       }

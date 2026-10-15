@@ -28,3 +28,6 @@ dist-ssr
 .env.*.local
 
 .vercel
+
+# Local streamer accounts (server/accounts.js); production keeps them on a Railway volume
+server/data/

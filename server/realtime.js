@@ -6,8 +6,12 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
+import { checkPassword, createInvite, getInvite, issueToken, readToken, redeemInvite, seedAdmin, validName, validPass } from './accounts.js';
 
 const PORT = Number(process.env.PORT) || 8787;
+// Shared with MediaMTX so only it can ask /mtx/auth; unset means deny all.
+const MTX_KEY = process.env.MTX_AUTH_KEY || '';
+const VOICE_PATH = /^[^/]+-voice-[0-9a-f]{8}$/;
 const ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
@@ -155,19 +159,129 @@ const handlers = {
   },
 };
 
-const server = createServer((req, res) => {
+// --- accounts API --------------------------------------------------------------
+// Bearer tokens, no cookies, so any origin may call it.
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
+
+function reply(res, status, body = {}) {
+  res.writeHead(status, { 'Content-Type': 'application/json', ...CORS });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      raw += chunk;
+      if (raw.length > 4096) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(raw);
+        resolve(body && typeof body === 'object' ? body : {});
+      } catch {
+        resolve({});
+      }
+    });
+    req.on('error', () => resolve({}));
+  });
+}
+
+const bearer = (req) => /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1] ?? null;
+
+// Password guesses: 10 per 10 minutes per client, wherever they come in.
+const attempts = new Map();
+function guessAllowed(who) {
+  const now = Date.now();
+  const entry = attempts.get(who);
+  if (!entry || now - entry.since > 600000) {
+    attempts.set(who, { since: now, n: 1 });
+    return true;
+  }
+  return ++entry.n <= 10;
+}
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+
+// MediaMTX asks before each publish to a main path (reads and voice paths are
+// excluded in its config). A session token passes, and so does an account's
+// name + password — OBS sends "name:password" as its Bearer token.
+async function mtxAuth(req, res, url) {
+  if (!MTX_KEY || url.searchParams.get('key') !== MTX_KEY) return reply(res, 403);
+  const b = await readBody(req);
+  if (b.action === 'read' || b.action === 'playback') return reply(res, 200);
+  if (b.action !== 'publish') return reply(res, 401);
+  if (typeof b.path === 'string' && VOICE_PATH.test(b.path)) return reply(res, 200);
+  let name = readToken(b.token);
+  let user = b.user;
+  let pass = b.password;
+  if (!name && typeof b.token === 'string' && b.token.includes(':')) {
+    const i = b.token.indexOf(':');
+    [user, pass] = [b.token.slice(0, i), b.token.slice(i + 1)];
+  }
+  if (!name && user && guessAllowed(`mtx:${b.ip}`)) name = await checkPassword(user, pass);
+  reply(res, name ? 200 : 401);
+}
+
+async function route(req, res) {
+  const url = new URL(req.url, 'http://relay');
+  const { pathname: path } = url;
+  const post = req.method === 'POST';
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS);
+    return res.end();
+  }
+  if (post && path === '/mtx/auth') return mtxAuth(req, res, url);
+
+  if (post && path === '/api/login') {
+    if (!guessAllowed(clientIp(req))) return reply(res, 429, { error: 'busy' });
+    const b = await readBody(req);
+    const name = await checkPassword(b.name, b.pass);
+    return name ? reply(res, 200, { name, token: issueToken(name) }) : reply(res, 401, { error: 'login' });
+  }
+  if (path === '/api/me') {
+    const name = readToken(bearer(req));
+    return name ? reply(res, 200, { name }) : reply(res, 401, { error: 'session' });
+  }
+  if (post && path === '/api/invites') {
+    const name = readToken(bearer(req));
+    return name ? reply(res, 200, createInvite(name)) : reply(res, 401, { error: 'session' });
+  }
+  const code = /^\/api\/invites\/([\w-]{6,32})$/.exec(path)?.[1];
+  if (code) {
+    const invite = getInvite(code);
+    return invite ? reply(res, 200, { by: invite.by, expires: invite.expires }) : reply(res, 404, { error: 'invite' });
+  }
+  if (post && path === '/api/register') {
+    if (!guessAllowed(clientIp(req))) return reply(res, 429, { error: 'busy' });
+    const b = await readBody(req);
+    if (!validName(b.name)) return reply(res, 400, { error: 'name' });
+    if (!validPass(b.pass)) return reply(res, 400, { error: 'pass' });
+    const result = await redeemInvite(b.code, b.name, b.pass);
+    if (result.error) return reply(res, result.error === 'taken' ? 409 : 404, result);
+    return reply(res, 200, { name: result.name, token: issueToken(result.name) });
+  }
+
   // Health check for the host platform; also handy to eyeball load.
   let clients = 0;
   for (const room of rooms.values()) clients += room.clients.size;
-  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-  res.end(JSON.stringify({ ok: true, rooms: rooms.size, clients }));
+  reply(res, path === '/' ? 200 : 404, { ok: path === '/', rooms: rooms.size, clients });
+}
+
+const server = createServer((req, res) => {
+  route(req, res).catch(() => reply(res, 500, { error: 'server' }));
 });
 
 const wss = new WebSocketServer({
   server,
   maxPayload: 4096,
   perMessageDeflate: false,
-  verifyClient: ({ origin }) => !ORIGINS.length || ORIGINS.includes(origin),
+  verifyClient: ({ origin }) => !ORIGINS.length || ORIGINS.includes('*') || ORIGINS.includes(origin),
 });
 
 wss.on('connection', (ws) => {
@@ -207,6 +321,9 @@ setInterval(() => {
     ws.alive = false;
     ws.ping();
   }
+  const now = Date.now();
+  for (const [who, entry] of attempts) if (now - entry.since > 600000) attempts.delete(who);
 }, 25000).unref();
 
+await seedAdmin(process.env.ADMIN_USER, process.env.ADMIN_PASS);
 server.listen(PORT, () => console.log(`majlis realtime on :${PORT}`));

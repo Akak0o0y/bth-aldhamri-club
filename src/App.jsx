@@ -5,6 +5,7 @@ import Player from './components/Player';
 import StreamBar from './components/StreamBar';
 import Toaster from './components/Toaster';
 import VoiceLounge from './components/VoiceLounge';
+import { checkSession, inviteCode } from './auth/session';
 import { useStore } from './lib/store';
 import { soundFX } from './services/soundEffects';
 import { startViewing, stopViewing } from './stream/controller';
@@ -15,9 +16,11 @@ import { prefsStore } from './ui/prefs';
 const loadStudio = () => import('./components/StudioDialog');
 const loadSettings = () => import('./components/SettingsDialog');
 const loadGuide = () => import('./components/GuideDialog');
+const loadAccount = () => import('./components/AccountDialog');
 const StudioDialog = lazy(loadStudio);
 const SettingsDialog = lazy(loadSettings);
 const GuideDialog = lazy(loadGuide);
+const AccountDialog = lazy(loadAccount);
 
 // One delegated listener gives every pressable control a ripple from the
 // exact press point (CSS: .rippling::after).
@@ -39,7 +42,8 @@ function ripple(e) {
 export default function App() {
   const eco = useStore(prefsStore, (s) => s.eco);
   const theater = useStore(prefsStore, (s) => s.theater);
-  const [dialog, setDialog] = useState(null);
+  // An invite link (?invite=CODE) opens straight onto the sign-up form.
+  const [dialog, setDialog] = useState(() => (inviteCode() ? 'account' : null));
   const close = useCallback(() => setDialog(null), []);
 
   useEffect(() => {
@@ -47,6 +51,7 @@ export default function App() {
     soundFX.enabled = sfx;
     soundFX.setVolume(sfxVolume);
     startViewing();
+    checkSession();
     document.addEventListener('pointerdown', ripple);
 
     const idle = window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500));
@@ -54,6 +59,7 @@ export default function App() {
       loadStudio();
       loadSettings();
       loadGuide();
+      loadAccount();
     });
     return () => {
       stopViewing();
@@ -87,6 +93,7 @@ export default function App() {
         {dialog === 'studio' && <StudioDialog onClose={close} onOpen={setDialog} />}
         {dialog === 'settings' && <SettingsDialog onClose={close} />}
         {dialog === 'guide' && <GuideDialog onClose={close} />}
+        {dialog === 'account' && <AccountDialog onClose={close} onOpen={setDialog} />}
       </Suspense>
 
       <Toaster />

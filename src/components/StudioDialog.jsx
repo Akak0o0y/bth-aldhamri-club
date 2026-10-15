@@ -16,6 +16,7 @@ import {
   Radio,
   Zap,
 } from 'lucide-react';
+import { authStore } from '../auth/session';
 import { useStore } from '../lib/store';
 import { pickAutoCodec, probeEncoders, VIDEO_CODECS } from '../stream/codecs';
 import { inviteLink, whipUrl } from '../stream/config';
@@ -79,6 +80,8 @@ function useCopy() {
 
 function SetupPanel({ onClose, onOpen }) {
   const config = useStore(streamStore, (s) => s.config);
+  const account = useStore(authStore, (s) => s.name);
+  const canPublish = Boolean(account || config.publishUser);
   const [tab, setTab] = useState('browser');
   const [source, setSource] = useState('screen');
   const [contentHint, setContentHint] = useState('motion');
@@ -122,6 +125,8 @@ function SetupPanel({ onClose, onOpen }) {
   const uploadMbps = ((bitrate + audioKbps) * 1.08) / 1000;
 
   const start = async () => {
+    // Only streamers with an account may publish; send everyone else to log in.
+    if (!canPublish) return onOpen('account');
     setBusy(true);
     setError('');
     soundFX.playRoyalChime();
@@ -262,12 +267,15 @@ function SetupPanel({ onClose, onOpen }) {
                 تغيير
               </button>
             </div>
-            {!config.publishUser && (
+            {canPublish ? (
+              account && <p className="hint">تبث باسم {account}</p>
+            ) : (
               <p className="settings-warn">
-                السيرفر يطلب بيانات المضيف للبث.{' '}
-                <button className="link-btn" onClick={() => onOpen('settings')}>
-                  أضفها من الإعدادات
-                </button>
+                البث لأصحاب الحسابات.{' '}
+                <button className="link-btn" onClick={() => onOpen('account')}>
+                  سجّل الدخول
+                </button>{' '}
+                أو اطلب رابط دعوة من مذيع.
               </p>
             )}
             {error && (
