@@ -81,6 +81,7 @@ function useCopy() {
 function SetupPanel({ onClose, onOpen }) {
   const config = useStore(streamStore, (s) => s.config);
   const account = useStore(authStore, (s) => s.name);
+  const myRoom = useStore(authStore, (s) => s.room);
   const canPublish = Boolean(account || config.publishUser);
   const [tab, setTab] = useState('browser');
   const [source, setSource] = useState('screen');
@@ -143,7 +144,8 @@ function SetupPanel({ onClose, onOpen }) {
     else setError(result.error);
   };
 
-  const whip = whipUrl(config);
+  // A streamer always broadcasts to their own channel (see goLive).
+  const whip = whipUrl({ ...config, room: myRoom || config.room });
 
   return (
     <>
@@ -268,7 +270,11 @@ function SetupPanel({ onClose, onOpen }) {
               </button>
             </div>
             {canPublish ? (
-              account && <p className="hint">تبث باسم {account}</p>
+              account && (
+                <p className="hint">
+                  تبث باسم {account} في قناتك <span className="mono">{myRoom}</span>
+                </p>
+              )
             ) : (
               <p className="settings-warn">
                 البث لأصحاب الحسابات.{' '}

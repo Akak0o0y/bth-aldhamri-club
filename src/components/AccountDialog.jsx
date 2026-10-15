@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, KeyRound, LoaderCircle, LogIn, LogOut, Radio, Trash2, UserPlus, UserRound, Users } from 'lucide-react';
+import { Check, Copy, KeyRound, LoaderCircle, LogIn, LogOut, Radio, Trash2, Tv, UserPlus, UserRound, Users } from 'lucide-react';
 import { useStore } from '../lib/store';
 import {
   authStore,
@@ -14,6 +14,8 @@ import {
   revokeInvite,
   signOut,
 } from '../auth/session';
+import { inviteLink } from '../stream/config';
+import { streamStore, updateConfig } from '../stream/controller';
 import { toast } from '../ui/prefs';
 import Dialog from './Dialog';
 
@@ -184,30 +186,75 @@ function RegisterForm({ code }) {
   );
 }
 
-function AccountPanel({ onOpen }) {
-  const owner = useStore(authStore, (s) => s.owner);
-  const [invite, setInvite] = useState(null); // { link, expires }
+function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
-  // Bumped after every change so the owner's lists reload.
-  const [rev, setRev] = useState(0);
-  const { busy, error, submit } = useSubmit(async () => {
-    setInvite(await createInvite());
-    setCopied(false);
-    setRev((n) => n + 1);
-  });
-
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(invite.link);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
       toast('تعذر النسخ — انسخ الرابط يدوياً', 'warn');
     }
   };
+  return (
+    <button type="button" className="btn btn--sm btn--icon" onClick={copy} aria-label="نسخ الرابط" title="نسخ الرابط">
+      {copied ? <Check size={15} /> : <Copy size={15} />}
+    </button>
+  );
+}
+
+// The streamer's own channel: the link their audience opens to watch and chat.
+function ChannelLink() {
+  const room = useStore(authStore, (s) => s.room);
+  const config = useStore(streamStore, (s) => s.config);
+  if (!room) return null;
+  const link = inviteLink({ server: config.server, room });
+
+  return (
+    <div className="settings-group">
+      <h3 className="settings-group__title">
+        <Tv size={16} />
+        قناتك
+      </h3>
+      <p className="settings-note">أرسل هذا الرابط لجمهورك: يفتح بثك والشات الخاص بقناتك. الشات يبدأ من جديد مع كل بث.</p>
+      <div className="settings-inline">
+        <input className="field mono" value={link} readOnly dir="ltr" onFocus={(e) => e.target.select()} aria-label="رابط قناتك" />
+        <CopyButton text={link} />
+      </div>
+      {config.room !== room && (
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={() => {
+              updateConfig({ room });
+              toast('انتقلت إلى قناتك');
+            }}
+          >
+            <Tv size={15} />
+            افتح قناتك
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccountPanel({ onOpen }) {
+  const owner = useStore(authStore, (s) => s.owner);
+  const [invite, setInvite] = useState(null); // { link, expires }
+  // Bumped after every change so the owner's lists reload.
+  const [rev, setRev] = useState(0);
+  const { busy, error, submit } = useSubmit(async () => {
+    setInvite(await createInvite());
+    setRev((n) => n + 1);
+  });
 
   return (
     <>
+      <ChannelLink />
+
       <form className="settings-group" onSubmit={submit}>
         <h3 className="settings-group__title">
           <UserPlus size={16} />
@@ -217,9 +264,7 @@ function AccountPanel({ onOpen }) {
         {invite && (
           <div className="settings-inline">
             <input className="field mono" value={invite.link} readOnly dir="ltr" onFocus={(e) => e.target.select()} aria-label="رابط الدعوة" />
-            <button type="button" className="btn btn--sm btn--icon" onClick={copy} aria-label="نسخ الرابط" title="نسخ الرابط">
-              {copied ? <Check size={15} /> : <Copy size={15} />}
-            </button>
+            <CopyButton key={invite.link} text={invite.link} />
           </div>
         )}
         {error && (

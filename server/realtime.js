@@ -19,6 +19,7 @@ import {
   redeemInvite,
   removeUser,
   revokeInvite,
+  roomOf,
   seedAdmin,
   validName,
   validPass,
@@ -125,6 +126,21 @@ function leave(ws) {
     const name = ws.roomName;
     room.idle = setTimeout(() => rooms.delete(name), ROOM_TTL);
   }
+}
+
+// A new broadcast starts its room's chat over. The studio tags every publish
+// of one broadcast, reconnects included, with the same ?session=; OBS sends
+// none, so all its publishes count as one broadcast.
+const sessions = new Map();
+function startSession(name, id) {
+  if (sessions.get(name) === id) return;
+  sessions.delete(name);
+  sessions.set(name, id);
+  if (sessions.size > MAX_ROOMS) sessions.delete(sessions.keys().next().value);
+  const room = rooms.get(name);
+  if (!room?.messages.length) return;
+  room.messages = [];
+  broadcast(room, { t: 'clear' });
 }
 
 const handlers = {
@@ -249,8 +265,14 @@ async function mtxAuth(req, res, url) {
     [user, pass] = [b.token.slice(0, i), b.token.slice(i + 1)];
   }
   if (!name && user && guessAllowed(`mtx:${b.ip}`)) name = await checkPassword(user, pass);
-  reply(res, name ? 200 : 401);
+  // A streamer publishes to their own channel only.
+  if (!name || roomOf(name) !== b.path) return reply(res, 401);
+  startSession(b.path, new URLSearchParams(String(b.query ?? '')).get('session') ?? '');
+  reply(res, 200);
 }
+
+// What the site needs to know about a signed-in streamer.
+const profile = (name) => ({ name, owner: isOwner(name), room: roomOf(name) });
 
 async function route(req, res) {
   const url = new URL(req.url, 'http://relay');
@@ -268,11 +290,11 @@ async function route(req, res) {
     if (!guessAllowed(clientIp(req))) return reply(res, 429, { error: 'busy' });
     const b = await readBody(req);
     const name = await checkPassword(b.name, b.pass);
-    return name ? reply(res, 200, { name, owner: isOwner(name), token: issueToken(name) }) : reply(res, 401, { error: 'login' });
+    return name ? reply(res, 200, { ...profile(name), token: issueToken(name) }) : reply(res, 401, { error: 'login' });
   }
   if (path === '/api/me') {
     const name = readToken(bearer(req));
-    return name ? reply(res, 200, { name, owner: isOwner(name) }) : reply(res, 401, { error: 'session' });
+    return name ? reply(res, 200, profile(name)) : reply(res, 401, { error: 'session' });
   }
   if (post && path === '/api/password') {
     const name = readToken(bearer(req));
@@ -311,7 +333,7 @@ async function route(req, res) {
     if (!validPass(b.pass)) return reply(res, 400, { error: 'pass' });
     const result = await redeemInvite(b.code, b.name, b.pass);
     if (result.error) return reply(res, result.error === 'taken' ? 409 : 404, result);
-    return reply(res, 200, { name: result.name, token: issueToken(result.name) });
+    return reply(res, 200, { ...profile(result.name), token: issueToken(result.name) });
   }
 
   // Health check for the host platform; also handy to eyeball load.

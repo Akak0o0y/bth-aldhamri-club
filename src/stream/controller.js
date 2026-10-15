@@ -219,11 +219,20 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
     publish: { source, presetId: preset.id, codecId, codecLabel, fps, kbps, contentHint, guarded: false },
   });
 
-  const { config } = streamStore.get();
   // A logged-in streamer sends their session; otherwise the saved name+password.
-  const { token } = authStore.get();
+  // They always broadcast to their own channel, and the page follows so they
+  // see their own chat.
+  const { token, room } = authStore.get();
+  let { config } = streamStore.get();
+  if (room && room !== config.room) {
+    config = saveConfig({ ...config, room });
+    set({ config });
+  }
+  // One id for the whole broadcast, reconnects included: the relay starts the
+  // channel's chat over only when it changes.
+  const session = Math.random().toString(36).slice(2, 10);
   const current = new WhipPublisher({
-    url: whipUrl(config),
+    url: `${whipUrl(config)}?session=${session}`,
     token,
     user: config.publishUser,
     pass: config.publishPass,

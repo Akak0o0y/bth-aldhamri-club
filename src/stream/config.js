@@ -30,12 +30,13 @@ export function loadConfig() {
   }
   const config = {
     server: cleanServer(server),
-    room: cleanRoom(params.get('room') || saved.room || 'majlis'),
+    // Each streamer's link opens their channel; a plain link opens the owner's.
+    room: cleanRoom(params.get('room') || 'majlis'),
     // Only the broadcaster needs these: MediaMTX guards publishing with them.
     publishUser: saved.publishUser || '',
     publishPass: saved.publishPass || '',
   };
-  if (params.has('server') || params.has('room')) saveConfig(config);
+  if (params.has('server')) saveConfig(config);
   return config;
 }
 
@@ -46,7 +47,15 @@ export function saveConfig(config) {
     publishUser: (config.publishUser || '').trim(),
     publishPass: config.publishPass || '',
   };
-  writeJSON(KEY, clean);
+  // The room lives in the address bar, not in storage, so a reload stays in
+  // the same channel and a fresh visit to the plain link doesn't.
+  const { room, ...saved } = clean;
+  writeJSON(KEY, saved);
+  const url = new URL(location.href);
+  if (url.searchParams.get('room') !== room) {
+    url.searchParams.set('room', room);
+    history.replaceState(null, '', url);
+  }
   return clean;
 }
 

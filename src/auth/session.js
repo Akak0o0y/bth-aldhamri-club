@@ -21,7 +21,7 @@ const ERRORS = {
   user: 'الحساب غير موجود — ربما حُذف من قبل',
 };
 
-export const authStore = createStore(readJSON(KEY, { name: '', token: '', owner: false }));
+export const authStore = createStore(readJSON(KEY, { name: '', token: '', owner: false, room: '' }));
 
 async function call(path, { body, auth, method } = {}) {
   let res;
@@ -48,14 +48,15 @@ function remember(auth) {
 }
 
 // `owner` only decides what the panel shows; the relay checks it on every call.
-function signIn({ name, token, owner }) {
-  remember({ name, token, owner: Boolean(owner) });
+// `room` is the streamer's own channel: where they broadcast and what they share.
+function signIn({ name, token, owner, room }) {
+  remember({ name, token, owner: Boolean(owner), room: room || '' });
   // Chat under the account name unless the viewer already picked one.
   if (prefsStore.get().username === GUEST_NAME) setPref({ username: name });
 }
 
 export function signOut() {
-  remember({ name: '', token: '', owner: false });
+  remember({ name: '', token: '', owner: false, room: '' });
 }
 
 export async function login(name, pass) {
@@ -98,11 +99,12 @@ export const removeUser = (name) => call(`/api/users/${encodeURIComponent(name)}
 export const revokeInvite = (code) => call(`/api/invites/${encodeURIComponent(code)}`, { method: 'DELETE', auth: true });
 
 // Drops a session the relay no longer accepts (expired, password changed or
-// account removed) and refreshes the owner flag; a network failure keeps it.
+// account removed) and refreshes the owner flag and channel; a network failure
+// keeps it.
 export function checkSession() {
   const { token } = authStore.get();
   if (!token) return;
-  call('/api/me', { auth: true }).then(({ owner }) => {
-    if (authStore.get().token === token) remember({ ...authStore.get(), owner: Boolean(owner) });
+  call('/api/me', { auth: true }).then(({ owner, room }) => {
+    if (authStore.get().token === token) remember({ ...authStore.get(), owner: Boolean(owner), room: room || '' });
   }, () => {});
 }

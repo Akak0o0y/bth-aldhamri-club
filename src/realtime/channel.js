@@ -133,6 +133,10 @@ function receive(msg) {
     case 'presence':
       set({ online: msg.online, voice: msg.voice });
       break;
+    // The streamer started a new broadcast: its chat starts over.
+    case 'clear':
+      set({ messages: [] });
+      break;
   }
 }
 

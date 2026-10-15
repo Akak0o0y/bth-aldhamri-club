@@ -45,13 +45,43 @@ const hashOf = async (pass, salt) => (await scryptAsync(pass, salt, 32)).toStrin
 export const validName = (name) => typeof name === 'string' && NAME.test(name);
 export const validPass = (pass) => typeof pass === 'string' && pass.length >= 8 && pass.length <= 128;
 
+// --- channels ----------------------------------------------------------------
+// Every streamer broadcasts to a room of their own: their MediaMTX path, their
+// chat room and their watch link (?room=). The owner keeps "majlis", the room a
+// plain link opens. The rest get one made from their name — ASCII only, as
+// MediaMTX paths are — with a random tail when that's empty or taken.
+
+const MAIN_ROOM = 'majlis';
+
+function newRoom(name) {
+  const base = keyOf(name)
+    .split('@')[0]
+    .replace(/[^a-z0-9]+/g, '-')
+    .slice(0, 24)
+    .replace(/^-|-$/g, '');
+  const taken = new Set([MAIN_ROOM, ...Object.values(db.users).map((u) => u.room)]);
+  let room = base.length >= 3 ? base : '';
+  // "...-voice-<8 hex>" paths skip MediaMTX's publish check: never hand one out.
+  while (!room || taken.has(room) || /-voice-[0-9a-f]{8}$/.test(room)) room = `${base || MAIN_ROOM}-${randomBytes(2).toString('hex')}`;
+  return room;
+}
+
+// Accounts from before channels get theirs on first boot.
+if (Object.values(db.users).some((u) => !u.room)) {
+  for (const user of Object.values(db.users)) user.room ||= user.by === null ? MAIN_ROOM : newRoom(user.name);
+  save();
+}
+
+export const roomOf = (name) => db.users[keyOf(name)]?.room ?? null;
+
 async function createUser(name, pass, by = null) {
   const salt = randomBytes(16).toString('base64');
   const hash = await hashOf(pass, salt);
   const key = keyOf(name);
   if (db.users[key]) return null;
   const now = Date.now();
-  db.users[key] = { name, salt, hash, created: now, since: now, by };
+  const room = by === null ? MAIN_ROOM : newRoom(name);
+  db.users[key] = { name, salt, hash, created: now, since: now, by, room };
   save();
   return name;
 }
