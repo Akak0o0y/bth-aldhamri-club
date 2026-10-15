@@ -7,6 +7,7 @@ import { createStore } from '../lib/store';
 import { prefsStore, setPref, toast } from '../ui/prefs';
 import { VIDEO_CODECS, probeDecoder } from './codecs';
 import { loadConfig, saveConfig, whepUrl, whipUrl } from './config';
+import { constantFrameRate } from './pacer';
 import { createSampler } from './stats';
 import { createTestPattern } from './testPattern';
 import { WhepPlayer } from './whep';
@@ -41,6 +42,7 @@ const set = streamStore.set;
 let player = null;
 let publisher = null;
 let localStream = null;
+let pacer = null; // { stream, stop } holding a screen capture at a fixed fps
 let statsTimer = null;
 let cpuStrikes = 0;
 let decodeKey = '';
@@ -229,12 +231,15 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
   // One id for the whole broadcast, reconnects included: the relay starts the
   // channel's chat over only when it changes.
   const session = Math.random().toString(36).slice(2, 10);
+  // A screen only yields frames when it changes; send them at a fixed rate.
+  // Cameras and the test pattern already run at a steady one.
+  pacer = source === 'screen' ? constantFrameRate(stream, fps) : null;
   const current = new WhipPublisher({
     url: `${whipUrl(config)}?session=${session}`,
     token,
     user: config.publishUser,
     pass: config.publishPass,
-    stream,
+    stream: pacer?.stream ?? stream,
     codecId,
     videoKbps: kbps,
     fps,
@@ -267,6 +272,8 @@ export function stopLive() {
   publisher?.stop();
   publisher = null;
   stopStats();
+  pacer?.stop();
+  pacer = null;
   localStream?.getTracks().forEach((t) => t.stop());
   localStream = null;
   set({ publish: null, stats: null, stream: null, status: 'idle', previewHidden: false });
