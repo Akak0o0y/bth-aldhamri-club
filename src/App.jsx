@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import ChatPanel from './components/ChatPanel';
 import Header from './components/Header';
+import NameDialog from './components/NameDialog';
 import Player from './components/Player';
 import StreamBar from './components/StreamBar';
 import Toaster from './components/Toaster';
 import VoiceLounge from './components/VoiceLounge';
-import { checkSession, inviteCode } from './auth/session';
+import { authStore, checkSession, inviteCode } from './auth/session';
 import { useStore } from './lib/store';
 import { soundFX } from './services/soundEffects';
 import { startViewing, stopViewing } from './stream/controller';
@@ -21,6 +22,9 @@ const StudioDialog = lazy(loadStudio);
 const SettingsDialog = lazy(loadSettings);
 const GuideDialog = lazy(loadGuide);
 const AccountDialog = lazy(loadAccount);
+
+// The default chat name in ui/prefs.js until a visitor picks their own.
+const GUEST_NAME = 'ضيف المجلس';
 
 // One delegated listener gives every pressable control a ripple from the
 // exact press point (CSS: .rippling::after).
@@ -42,8 +46,12 @@ function ripple(e) {
 export default function App() {
   const eco = useStore(prefsStore, (s) => s.eco);
   const theater = useStore(prefsStore, (s) => s.theater);
-  // An invite link (?invite=CODE) opens straight onto the sign-up form.
-  const [dialog, setDialog] = useState(() => (inviteCode() ? 'account' : null));
+  // A streamer invite (?invite=CODE) opens straight onto the sign-up form; any
+  // other visitor without a name yet is asked for one for the chat and mic.
+  const [dialog, setDialog] = useState(() => {
+    if (inviteCode()) return 'account';
+    return !authStore.get().name && prefsStore.get().username === GUEST_NAME ? 'name' : null;
+  });
   const close = useCallback(() => setDialog(null), []);
 
   useEffect(() => {
@@ -94,6 +102,7 @@ export default function App() {
         {dialog === 'settings' && <SettingsDialog onClose={close} />}
         {dialog === 'guide' && <GuideDialog onClose={close} />}
         {dialog === 'account' && <AccountDialog onClose={close} onOpen={setDialog} />}
+        {dialog === 'name' && <NameDialog onClose={close} />}
       </Suspense>
 
       <Toaster />
