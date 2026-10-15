@@ -316,7 +316,8 @@ function SetupPanel({ onClose, onOpen }) {
             </div>
             <div className="copy-row">
               <span className="copy-row__key">Bearer Token</span>
-              <span className="faint">اتركه فارغاً</span>
+              {/* The relay accepts "name:password" from OBS (see mtxAuth). */}
+              <span className="mono copy-row__val">{account || 'اسم-حسابك'}:كلمة-المرور</span>
             </div>
           </section>
           <section className="studio__block">
