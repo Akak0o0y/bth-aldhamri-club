@@ -62,7 +62,10 @@ function startStats(pc, role) {
       const stats = await sample();
       set({ stats });
       if (role === 'viewer') checkDecoder(stats);
-      else cpuGuard(stats);
+      else {
+        tcpGuard(stats);
+        cpuGuard(stats);
+      }
     } catch {
       // Connection closed between two ticks.
     }
@@ -81,6 +84,24 @@ function checkDecoder(stats) {
     fps: stats.fps || 30,
     kbps: stats.kbps || 4000,
   }).then((hw) => set({ hwDecode: hw }));
+}
+
+// A server without public UDP (Railway) carries media over ICE-TCP, where any
+// bitrate the uplink can't keep up with queues as seconds of delay instead of
+// being dropped. Measured on that path: 2 Mbps held ~230 ms, 4 Mbps already
+// spiked past 500 ms. So once we see a TCP route, cap to what stays live.
+function tcpGuard(stats) {
+  const pub = streamStore.get().publish;
+  if (!pub || !publisher || pub.tcpCap || stats.protocol !== 'tcp') return;
+  const height = PRESETS.find((p) => p.id === pub.presetId)?.height ?? 1080;
+  const tcpCap = height > 720 ? 3000 : 2500;
+  const kbps = Math.min(pub.kbps, tcpCap);
+  const fps = Math.min(pub.fps, 30);
+  publisher.updateEncoding({ videoKbps: kbps, fps, scaleDown: height > 1080 ? height / 1080 : undefined });
+  set({ publish: { ...pub, kbps, fps, tcpCap } });
+  if (kbps < pub.kbps || fps < pub.fps) {
+    toast(`السيرفر يعمل عبر TCP — خفّضنا البث إلى ${kbps / 1000} Mbps و${fps} إطاراً ليبقى التأخير أقل من ثانية`, 'warn');
+  }
 }
 
 // Chrome already adapts under load, but stepping 60 -> 30fps ourselves is
@@ -248,6 +269,7 @@ export function stopLive() {
 export function setLiveBitrate(kbps) {
   const pub = streamStore.get().publish;
   if (!pub || !publisher) return;
+  if (pub.tcpCap) kbps = Math.min(kbps, pub.tcpCap);
   publisher.updateEncoding({ videoKbps: kbps });
   set({ publish: { ...pub, kbps } });
 }
