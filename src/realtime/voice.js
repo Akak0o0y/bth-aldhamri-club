@@ -72,22 +72,43 @@ function sync() {
 }
 
 // --- speaking meter --------------------------------------------------------
-// Remote levels come free with every RTP packet (getSynchronizationSources);
-// our own comes from the sender's media-source stats. 4 Hz, paused when hidden.
+// Levels come from per-track stats (MediaMTX doesn't forward the RTP audio-level
+// header, so getSynchronizationSources has none): decoded level for each
+// speaker, media-source level for our own mic. 4 Hz, paused when hidden.
+
+async function levelOf(rtp, type) {
+  const stats = await rtp?.getStats().catch(() => null);
+  let level = 0;
+  stats?.forEach((r) => {
+    if (r.type === type && r.kind === 'audio') level = r.audioLevel ?? 0;
+  });
+  return level;
+}
+
+const audioOf = (list) => list?.find((t) => t.track?.kind === 'audio');
+
+let metering = false;
 
 async function meter() {
-  if (document.hidden) return;
+  if (document.hidden || metering) return;
+  metering = true;
+  try {
+    await sampleLevels();
+  } finally {
+    metering = false;
+  }
+}
+
+async function sampleLevels() {
   const now = performance.now();
-  for (const [id, { player }] of players) {
-    const receiver = player.pc?.getReceivers().find((r) => r.track.kind === 'audio');
-    if ((receiver?.getSynchronizationSources()[0]?.audioLevel ?? 0) > LEVEL) loudAt.set(id, now);
+  const checks = [...players].map(async ([id, { player }]) => {
+    if ((await levelOf(audioOf(player.pc?.getReceivers()), 'inbound-rtp')) > LEVEL) loudAt.set(id, now);
+  });
+  if (voiceStore.get().mic === 'live') {
+    const you = rtStore.get().you;
+    checks.push(levelOf(audioOf(publisher?.pc?.getSenders()), 'media-source').then((l) => l > LEVEL && loudAt.set(you, now)));
   }
-  if (publisher?.pc && voiceStore.get().mic === 'live') {
-    const stats = await publisher.pc.getStats().catch(() => null);
-    stats?.forEach((r) => {
-      if (r.type === 'media-source' && r.kind === 'audio' && r.audioLevel > LEVEL) loudAt.set(rtStore.get().you, now);
-    });
-  }
+  await Promise.all(checks);
   const speaking = [];
   for (const [id, at] of loudAt) {
     if (now - at < HOLD) speaking.push(id);

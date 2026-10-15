@@ -2,7 +2,7 @@
 // to every viewer without transcoding). That keeps the broadcaster's CPU and
 // upload flat no matter how many friends join.
 import { preferCodec } from './codecs';
-import { linkToIceServers, parseOffer, sdpFragment, tunePublisherAnswer, tunePublisherOffer } from './sdp';
+import { authHeaders, linkToIceServers, parseOffer, sdpFragment, tunePublisherAnswer, tunePublisherOffer } from './sdp';
 
 const FALLBACK_ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
 
@@ -16,10 +16,12 @@ export class WhipPublisher {
   #retryTimer = null;
   #stopped = true;
   #videoSender = null;
+  #auth;
 
-  // opts: { url, stream, codecId, videoKbps, fps, contentHint, music, audioKbps, onStatus }
+  // opts: { url, user?, pass?, stream, codecId, videoKbps, fps, contentHint, music, audioKbps, onStatus }
   constructor(opts) {
     this.#opts = opts;
+    this.#auth = authHeaders(opts);
   }
 
   get pc() {
@@ -72,7 +74,7 @@ export class WhipPublisher {
       this.#pc = null;
     }
     if (this.#session) {
-      fetch(this.#session, { method: 'DELETE', keepalive: true }).catch(() => {});
+      fetch(this.#session, { method: 'DELETE', headers: this.#auth, keepalive: true }).catch(() => {});
       this.#session = null;
     }
     this.#videoSender = null;
@@ -95,7 +97,7 @@ export class WhipPublisher {
 
     let iceServers = FALLBACK_ICE;
     try {
-      const res = await fetch(o.url, { method: 'OPTIONS' });
+      const res = await fetch(o.url, { method: 'OPTIONS', headers: this.#auth });
       iceServers = linkToIceServers(res.headers.get('Link')) ?? FALLBACK_ICE;
     } catch {
       if (live()) this.#retry('unreachable', 'تعذر الوصول إلى سيرفر البث — المعاينة محلية فقط', 5000);
@@ -148,7 +150,7 @@ export class WhipPublisher {
 
       const res = await fetch(o.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
+        headers: { 'Content-Type': 'application/sdp', ...this.#auth },
         body: tunePublisherOffer(offer.sdp, o),
       });
       if (!live()) return;
@@ -178,7 +180,7 @@ export class WhipPublisher {
     if (!this.#session || !this.#offer) return;
     fetch(this.#session, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/trickle-ice-sdpfrag', 'If-Match': '*' },
+      headers: { 'Content-Type': 'application/trickle-ice-sdpfrag', 'If-Match': '*', ...this.#auth },
       body: sdpFragment(this.#offer, candidates),
     }).catch(() => {});
   }

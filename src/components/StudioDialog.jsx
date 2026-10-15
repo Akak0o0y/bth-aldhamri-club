@@ -262,6 +262,14 @@ function SetupPanel({ onClose, onOpen }) {
                 تغيير
               </button>
             </div>
+            {!config.publishUser && (
+              <p className="settings-warn">
+                السيرفر يطلب بيانات المضيف للبث.{' '}
+                <button className="link-btn" onClick={() => onOpen('settings')}>
+                  أضفها من الإعدادات
+                </button>
+              </p>
+            )}
             {error && (
               <p className="studio__error" role="alert">
                 {error}

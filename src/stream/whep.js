@@ -2,7 +2,7 @@
 // hands every decoded frame to the screen immediately (same trick as
 // binbat/live777's player-core). Reconnects on its own and stays quiet while
 // the tab is hidden, so an idle "waiting for host" screen costs nothing.
-import { linkToIceServers, parseOffer, sdpFragment, tuneViewerOffer } from './sdp';
+import { authHeaders, linkToIceServers, parseOffer, sdpFragment, tuneViewerOffer } from './sdp';
 
 const FALLBACK_ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
 
@@ -33,9 +33,11 @@ export class WhepPlayer {
   #graceTimer = null;
   #failures = 0;
   #stopped = true;
+  #auth;
 
-  constructor({ url, onStatus, onStream, lowLatency = true }) {
+  constructor({ url, user, pass, onStatus, onStream, lowLatency = true }) {
     this.#url = url;
+    this.#auth = authHeaders({ user, pass });
     this.#onStatus = onStatus;
     this.#onStream = onStream;
     this.#lowLatency = lowLatency;
@@ -84,7 +86,7 @@ export class WhepPlayer {
     }
     if (this.#session) {
       // keepalive lets the DELETE finish even during page unload.
-      fetch(this.#session, { method: 'DELETE', keepalive: true }).catch(() => {});
+      fetch(this.#session, { method: 'DELETE', headers: this.#auth, keepalive: true }).catch(() => {});
       this.#session = null;
     }
     this.#pending = [];
@@ -109,7 +111,7 @@ export class WhepPlayer {
 
     let iceServers = FALLBACK_ICE;
     try {
-      const res = await fetch(this.#url, { method: 'OPTIONS' });
+      const res = await fetch(this.#url, { method: 'OPTIONS', headers: this.#auth });
       iceServers = linkToIceServers(res.headers.get('Link')) ?? FALLBACK_ICE;
     } catch {
       if (!live()) return;
@@ -159,7 +161,7 @@ export class WhepPlayer {
 
       const res = await fetch(this.#url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
+        headers: { 'Content-Type': 'application/sdp', ...this.#auth },
         body: offer.sdp,
       });
       if (!live()) return;
@@ -187,7 +189,7 @@ export class WhepPlayer {
     if (!this.#session || !this.#offer) return;
     fetch(this.#session, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/trickle-ice-sdpfrag', 'If-Match': '*' },
+      headers: { 'Content-Type': 'application/trickle-ice-sdpfrag', 'If-Match': '*', ...this.#auth },
       body: sdpFragment(this.#offer, candidates),
     }).catch(() => {
       // Servers without trickle support still connect via their own candidates.

@@ -50,7 +50,7 @@ function VoiceLounge() {
               >
                 {deaf ? <HeadphoneOff size={15} /> : <Headphones size={15} />}
               </button>
-              <button className={`btn btn--sm ${mic === 'off' ? '' : 'btn--brass'}`} aria-pressed={mic !== 'off'} onClick={toggleMic}>
+              <button className={`btn btn--sm ${mic === 'off' ? '' : 'btn--accent'}`} aria-pressed={mic !== 'off'} onClick={toggleMic}>
                 {mic === 'off' ? <MicOff size={15} /> : <Mic size={15} />}
                 {mic === 'off' ? 'افتح المايك' : mic === 'live' ? 'المايك مفتوح' : 'جارٍ الاتصال…'}
               </button>
@@ -59,7 +59,7 @@ function VoiceLounge() {
               </button>
             </>
           ) : (
-            <button className="btn btn--sm btn--brass" onClick={joinVoice} disabled={!open}>
+            <button className="btn btn--sm btn--primary" onClick={joinVoice} disabled={!open}>
               <Headphones size={15} />
               انضم للديوانية
             </button>

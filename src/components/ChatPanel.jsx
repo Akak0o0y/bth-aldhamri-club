@@ -135,7 +135,7 @@ function Composer({ onSent }) {
           aria-label="رسالة"
           maxLength={400}
         />
-        <button type="submit" className="btn btn--brass composer__send" aria-label="إرسال" disabled={!text.trim() || !open}>
+        <button type="submit" className="btn btn--primary composer__send" aria-label="إرسال" disabled={!text.trim() || !open}>
           <Send size={18} />
         </button>
       </form>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Check, Copy, Leaf, Server, Settings2, User, Volume2, Zap } from 'lucide-react';
+import { Check, Cloud, Copy, Eye, EyeOff, KeyRound, Leaf, Server, Settings2, User, Volume2, Zap } from 'lucide-react';
 import { useStore } from '../lib/store';
-import { configProblem, inviteLink, whepUrl } from '../stream/config';
+import { CLOUD_MEDIAMTX_URL, configProblem, inviteLink, whepUrl } from '../stream/config';
 import { setLowLatency, streamStore, updateConfig } from '../stream/controller';
 import { soundFX } from '../services/soundEffects';
 import { LOW_END, prefsStore, setPref, toast } from '../ui/prefs';
@@ -14,6 +14,10 @@ export default function SettingsDialog({ onClose }) {
   const [room, setRoom] = useState(config.room);
   const [name, setName] = useState(prefs.username);
   const [copied, setCopied] = useState(false);
+  const [publishUser, setPublishUser] = useState(config.publishUser ?? '');
+  const [publishPass, setPublishPass] = useState(config.publishPass ?? '');
+  const [showPass, setShowPass] = useState(false);
+  const credsDirty = publishUser.trim() !== (config.publishUser ?? '') || publishPass !== (config.publishPass ?? '');
 
   const draft = { server, room };
   const problem = configProblem(draft);
@@ -48,15 +52,28 @@ export default function SettingsDialog({ onClose }) {
             <label className="label" htmlFor="set-server">
               عنوان السيرفر (MediaMTX)
             </label>
-            <input
-              id="set-server"
-              className="field mono"
-              value={server}
-              onChange={(e) => setServer(e.target.value)}
-              placeholder="http://192.168.1.10:8889"
-              spellCheck="false"
-              dir="ltr"
-            />
+            <div className="settings-inline">
+              <input
+                id="set-server"
+                className="field mono"
+                value={server}
+                onChange={(e) => setServer(e.target.value)}
+                placeholder={CLOUD_MEDIAMTX_URL}
+                spellCheck="false"
+                dir="ltr"
+              />
+              {server.trim() !== CLOUD_MEDIAMTX_URL && (
+                <button
+                  type="button"
+                  className="btn btn--sm btn--icon"
+                  onClick={() => setServer(CLOUD_MEDIAMTX_URL)}
+                  aria-label="استخدم السيرفر السحابي"
+                  title="استخدم السيرفر السحابي"
+                >
+                  <Cloud size={15} />
+                </button>
+              )}
+            </div>
           </div>
           <div>
             <label className="label" htmlFor="set-room">
@@ -86,6 +103,73 @@ export default function SettingsDialog({ onClose }) {
           </button>
           <button type="submit" className="btn btn--sm btn--primary" disabled={!dirty}>
             حفظ واتصال
+          </button>
+        </div>
+      </form>
+
+      <form
+        className="settings-group"
+        onSubmit={(e) => {
+          e.preventDefault();
+          updateConfig({ publishUser: publishUser.trim(), publishPass });
+          toast('تم حفظ بيانات المضيف على هذا الجهاز');
+        }}
+      >
+        <h3 className="settings-group__title">
+          <KeyRound size={16} />
+          بيانات المضيف — للبث فقط
+        </h3>
+        <p className="settings-note">
+          السيرفر يسمح للجميع بالمشاهدة، لكن البث يحتاج اسم المستخدم وكلمة المرور. تُحفظ على هذا الجهاز فقط ولا تُرسل في رابط الدعوة.
+        </p>
+        <div className="settings-grid settings-grid--even">
+          <div>
+            <label className="label" htmlFor="set-puser">
+              اسم المستخدم
+            </label>
+            <input
+              id="set-puser"
+              className="field mono"
+              value={publishUser}
+              onChange={(e) => setPublishUser(e.target.value)}
+              autoComplete="username"
+              spellCheck="false"
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="set-ppass">
+              كلمة المرور
+            </label>
+            <div className="settings-inline">
+              <input
+                id="set-ppass"
+                className="field mono"
+                type={showPass ? 'text' : 'password'}
+                value={publishPass}
+                onChange={(e) => setPublishPass(e.target.value)}
+                autoComplete="current-password"
+                spellCheck="false"
+                dir="ltr"
+              />
+              <button
+                type="button"
+                className="btn btn--sm btn--icon"
+                onClick={() => setShowPass((v) => !v)}
+                aria-label={showPass ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                title={showPass ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+              >
+                {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="settings-actions">
+          <span className="faint settings-url">
+            {config.publishUser ? `محفوظ للمستخدم ${config.publishUser}` : 'لم تُحفظ بيانات بعد'}
+          </span>
+          <button type="submit" className="btn btn--sm btn--primary" disabled={!credsDirty}>
+            حفظ
           </button>
         </div>
       </form>

@@ -14,12 +14,14 @@
 
 2. **سيرفر البث المباشر (Cloud Media Server - MediaMTX)**
    - يعمل على السحابة عبر حاوية Docker على منصة **Railway**:
-   - رابط السيرفر السحابي: `https://mediamtx-production-cb12.up.railway.app`
+   - رابط السيرفر السحابي: `https://mediamtx-production-dc92.up.railway.app`
+   - الوسائط تمر عبر ICE-TCP (منفذ `iriguchi.proxy.rlwy.net:16534`) لأن Railway لا يفتح UDP — الإعداد في `server/mediamtx/`.
+   - المشاهدة مفتوحة للجميع، أما بث المجلس الرئيسي فيحتاج اسم المستخدم `majlis-host` وكلمة المرور من متغيّر `PUBLISH_PASS` في Railway.
    - يدعم بروتوكولات **WHIP** (لبث الفيديو والصوت من المتصفح أو OBS) و **WHEP** (لمشاهدة البث بأقل من 500ms).
 
 3. **سيرفر التفاعل والشات والديوانية الصوتية (Realtime Relay Server)**
    - يعمل على السحابة كخدمة WebSocket دائمة على **Railway**:
-   - رابط السيرفر السحابي: `wss://realtime-production-2845.up.railway.app`
+   - رابط السيرفر السحابي: `wss://realtime-production-988e.up.railway.app` (الكود في `server/realtime.js`)
    - يدير شات المجلس، التفاعلات السريعة، التصويت اللحظي، وقائمة المتحدثين في الديوانية الصوتية.
 
 ---
@@ -34,8 +36,8 @@
 ### ٢. من برنامج OBS Studio
 - افتح إعدادات OBS: `Settings -> Stream`
 - Service: `WHIP`
-- Server: `https://mediamtx-production-cb12.up.railway.app/majlis/whip`
-- Bearer Token: اتركه فارغاً.
+- Server: `https://mediamtx-production-dc92.up.railway.app/majlis/whip`
+- Bearer Token: `majlis-host:<كلمة المرور>` (كلمة المرور في متغيّر `PUBLISH_PASS` بخدمة mediamtx على Railway).
 - اضغط **Start Streaming**.
 
 ---

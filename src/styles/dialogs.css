@@ -382,6 +382,13 @@ code {
   grid-template-columns: 2fr 1fr;
   gap: 10px;
 }
+.settings-grid--even {
+  grid-template-columns: 1fr 1fr;
+}
+.settings-note {
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
 .settings-warn {
   padding: 8px 12px;
   border-radius: var(--r-sm);

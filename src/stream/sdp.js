@@ -2,6 +2,14 @@
 // Trickle-ICE and Link-header parsing follow MediaMTX's own reader.js /
 // publisher.js (github.com/bluenviron/mediamtx, internal/servers/webrtc).
 
+// Basic auth for a protected publish path, as MediaMTX's publisher.js sends
+// it. Encoded as UTF-8 first: btoa alone throws on Arabic names.
+export function authHeaders({ user, pass }) {
+  if (!user) return {};
+  const bytes = new TextEncoder().encode(`${user}:${pass ?? ''}`);
+  return { Authorization: `Basic ${btoa(String.fromCharCode(...bytes))}` };
+}
+
 export function linkToIceServers(link) {
   if (!link) return null;
   return link

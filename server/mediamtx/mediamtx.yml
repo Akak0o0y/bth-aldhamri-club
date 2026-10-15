@@ -1,0 +1,46 @@
+# MediaMTX for مجلس ظمرة on Railway. start.sh fills the __PLACEHOLDERS__ from
+# service variables, so no secret lives in the repo. WebRTC only.
+logLevel: info
+api: false
+metrics: false
+pprof: false
+playback: false
+rtsp: false
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+webrtc: true
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+# Railway has no public UDP, so ICE runs over TCP through Railway's TCP proxy.
+# The candidate must carry the proxy's public host and port.
+webrtcLocalUDPAddress: ""
+webrtcLocalTCPAddress: :__ICE_PORT__
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [__ICE_HOST__]
+webrtcICEServers2: []
+
+authInternalUsers:
+  # Viewers: watch any path, and open a mic in the voice lounge.
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+        path:
+      - action: publish
+        path: "~^[^/]+-voice-[0-9a-f]{8}$"
+  # The broadcaster: may publish the main stream.
+  - user: __PUBLISH_USER__
+    pass: __PUBLISH_PASS__
+    ips: []
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+
+paths:
+  all_others:

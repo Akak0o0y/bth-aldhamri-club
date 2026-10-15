@@ -13,7 +13,7 @@ const ID = /^[a-z0-9]{6,16}$/;
 // crypto.randomUUID needs https; getRandomValues also works on a LAN http page.
 const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, '0')).join('');
 
-export const CLOUD_REALTIME_URL = 'wss://realtime-production-2845.up.railway.app';
+export const CLOUD_REALTIME_URL = 'wss://realtime-production-988e.up.railway.app';
 
 // ?rt= overrides for testing, the build bakes in the deployed relay, and a
 // local dev server falls back to the same machine (like the media server).

@@ -136,8 +136,12 @@ export function setLowLatency(on) {
 }
 
 export function updateConfig(next) {
-  const config = saveConfig(next);
+  const prev = streamStore.get().config;
+  const config = saveConfig({ ...prev, ...next });
   set({ config });
+  // Credentials only matter at the next broadcast; reconnect only when the
+  // stream location itself changed.
+  if (config.server === prev.server && config.room === prev.room) return;
   if (streamStore.get().role === 'viewer') startViewing();
   else toast('سيُستخدم السيرفر الجديد في البث القادم');
 }
@@ -193,8 +197,11 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
     publish: { source, presetId: preset.id, codecId, codecLabel, fps, kbps, contentHint, guarded: false },
   });
 
+  const { config } = streamStore.get();
   const current = new WhipPublisher({
-    url: whipUrl(streamStore.get().config),
+    url: whipUrl(config),
+    user: config.publishUser,
+    pass: config.publishPass,
     stream,
     codecId,
     videoKbps: kbps,
