@@ -11,20 +11,23 @@ const GUEST_NAME = 'ضيف المجلس';
 const ERRORS = {
   login: 'اسم المستخدم أو كلمة المرور غير صحيحة',
   busy: 'محاولات كثيرة — انتظر عشر دقائق ثم حاول مجدداً',
-  name: 'الاسم من 3 إلى 24 حرفاً أو رقماً، ويُسمح بـ _ . -',
+  name: 'الاسم من 3 إلى 64 حرفاً أو رقماً، ويُسمح بـ _ . - @ + — يصلح البريد الإلكتروني اسماً',
   pass: 'كلمة المرور 8 أحرف على الأقل',
   taken: 'هذا الاسم مستخدم — اختر اسماً آخر',
   invite: 'رابط الدعوة غير صالح أو انتهت صلاحيته أو استُخدم من قبل',
   session: 'انتهت الجلسة — سجّل الدخول من جديد',
+  current: 'كلمة المرور الحالية غير صحيحة',
+  owner: 'هذا الإجراء لصاحب المجلس فقط',
+  user: 'الحساب غير موجود — ربما حُذف من قبل',
 };
 
-export const authStore = createStore(readJSON(KEY, { name: '', token: '' }));
+export const authStore = createStore(readJSON(KEY, { name: '', token: '', owner: false }));
 
-async function call(path, { body, auth } = {}) {
+async function call(path, { body, auth, method } = {}) {
   let res;
   try {
     res = await fetch(`${relayHttpUrl()}${path}`, {
-      method: body ? 'POST' : 'GET',
+      method: method || (body ? 'POST' : 'GET'),
       headers: auth ? { Authorization: `Bearer ${authStore.get().token}` } : {},
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -39,16 +42,20 @@ async function call(path, { body, auth } = {}) {
   return data;
 }
 
-function signIn({ name, token }) {
-  writeJSON(KEY, { name, token });
-  authStore.set({ name, token });
+function remember(auth) {
+  writeJSON(KEY, auth);
+  authStore.set(auth);
+}
+
+// `owner` only decides what the panel shows; the relay checks it on every call.
+function signIn({ name, token, owner }) {
+  remember({ name, token, owner: Boolean(owner) });
   // Chat under the account name unless the viewer already picked one.
   if (prefsStore.get().username === GUEST_NAME) setPref({ username: name });
 }
 
 export function signOut() {
-  writeJSON(KEY, { name: '', token: '' });
-  authStore.set({ name: '', token: '' });
+  remember({ name: '', token: '', owner: false });
 }
 
 export async function login(name, pass) {
@@ -75,8 +82,27 @@ export async function createInvite() {
 // A link like ?invite=CODE opens the sign-up form.
 export const inviteCode = () => new URLSearchParams(location.search).get('invite');
 
-// Drops a session the relay no longer accepts (expired or account removed);
-// a network failure keeps it.
+// The relay signs out every other device; this one keeps going on a new token.
+export async function changePassword(current, pass) {
+  const { token } = await call('/api/password', { body: { current, pass }, auth: true });
+  remember({ ...authStore.get(), token });
+}
+
+// Owner only: every account, and every invite not used yet.
+export async function loadMembers() {
+  const [{ users }, { invites }] = await Promise.all([call('/api/users', { auth: true }), call('/api/invites', { auth: true })]);
+  return { users, invites };
+}
+
+export const removeUser = (name) => call(`/api/users/${encodeURIComponent(name)}`, { method: 'DELETE', auth: true });
+export const revokeInvite = (code) => call(`/api/invites/${encodeURIComponent(code)}`, { method: 'DELETE', auth: true });
+
+// Drops a session the relay no longer accepts (expired, password changed or
+// account removed) and refreshes the owner flag; a network failure keeps it.
 export function checkSession() {
-  if (authStore.get().token) call('/api/me', { auth: true }).catch(() => {});
+  const { token } = authStore.get();
+  if (!token) return;
+  call('/api/me', { auth: true }).then(({ owner }) => {
+    if (authStore.get().token === token) remember({ ...authStore.get(), owner: Boolean(owner) });
+  }, () => {});
 }

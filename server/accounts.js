@@ -50,7 +50,8 @@ async function createUser(name, pass, by = null) {
   const hash = await hashOf(pass, salt);
   const key = keyOf(name);
   if (db.users[key]) return null;
-  db.users[key] = { name, salt, hash, created: Date.now(), by };
+  const now = Date.now();
+  db.users[key] = { name, salt, hash, created: now, since: now, by };
   save();
   return name;
 }
@@ -63,12 +64,26 @@ export async function checkPassword(name, pass) {
   return timingSafeEqual(got, Buffer.from(user.hash, 'base64')) ? user.name : null;
 }
 
+// Needs the current password. Moving `since` forward signs out every other
+// device; the caller hands this one a fresh token.
+export async function changePassword(name, current, pass) {
+  if (!(await checkPassword(name, current))) return false;
+  const salt = randomBytes(16).toString('base64');
+  const hash = await hashOf(pass, salt);
+  const user = db.users[keyOf(name)];
+  if (!user) return false; // removed while we were hashing
+  Object.assign(user, { salt, hash, since: Date.now() });
+  save();
+  return true;
+}
+
 // --- sessions ----------------------------------------------------------------
 
 const sign = (data) => createHmac('sha256', SECRET).update(data).digest('base64url');
 
 export function issueToken(name) {
-  const body = Buffer.from(JSON.stringify({ u: name, exp: Date.now() + TOKEN_TTL })).toString('base64url');
+  const now = Date.now();
+  const body = Buffer.from(JSON.stringify({ u: name, iat: now, exp: now + TOKEN_TTL })).toString('base64url');
   return `${body}.${sign(body)}`;
 }
 
@@ -79,10 +94,13 @@ export function readToken(token) {
   const expected = sign(body);
   if (mac.length !== expected.length || !timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
   try {
-    const { u, exp } = JSON.parse(Buffer.from(body, 'base64url').toString());
-    // A removed account loses its sessions too.
+    // Tokens from before `iat` existed count as issued at 0.
+    const { u, iat = 0, exp } = JSON.parse(Buffer.from(body, 'base64url').toString());
+    // A removed account loses its sessions too, and a session older than the
+    // account's `since` (last password change, or a removed name signed up
+    // again) is void.
     const user = typeof u === 'string' ? db.users[keyOf(u)] : null;
-    return exp > Date.now() && user ? user.name : null;
+    return exp > Date.now() && user && iat >= (user.since ?? 0) ? user.name : null;
   } catch {
     return null;
   }
@@ -120,6 +138,43 @@ export async function redeemInvite(code, name, pass) {
     return { error: 'taken' };
   }
   return { name: created };
+}
+
+// --- owner -------------------------------------------------------------------
+// The owner is the first account, the one nobody invited. Only it sees every
+// account and pending invite, and only it can remove them.
+
+export const isOwner = (name) => db.users[keyOf(name)]?.by === null;
+
+export const listUsers = () =>
+  Object.values(db.users)
+    .map(({ name, by, created }) => ({ name, by, created }))
+    .sort((a, b) => a.created - b.created);
+
+// The owner stays. A removed streamer's sessions die with the account (see
+// readToken), and so do the invites they handed out.
+export function removeUser(name) {
+  const key = keyOf(name);
+  const user = db.users[key];
+  if (!user || user.by === null) return false;
+  delete db.users[key];
+  for (const code in db.invites) if (db.invites[code].by === user.name) delete db.invites[code];
+  save();
+  return true;
+}
+
+export function listInvites() {
+  pruneInvites();
+  return Object.entries(db.invites)
+    .map(([code, { by, expires }]) => ({ code, by, expires }))
+    .sort((a, b) => a.expires - b.expires);
+}
+
+export function revokeInvite(code) {
+  if (!getInvite(code)) return false;
+  delete db.invites[code];
+  save();
+  return true;
 }
 
 // First boot: the owner account comes from ADMIN_USER / ADMIN_PASS.

@@ -1,11 +1,24 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, LoaderCircle, LogIn, LogOut, Radio, UserPlus, UserRound } from 'lucide-react';
+import { Check, Copy, KeyRound, LoaderCircle, LogIn, LogOut, Radio, Trash2, UserPlus, UserRound, Users } from 'lucide-react';
 import { useStore } from '../lib/store';
-import { authStore, createInvite, inviteCode, login, lookupInvite, register, signOut } from '../auth/session';
+import {
+  authStore,
+  changePassword,
+  createInvite,
+  inviteCode,
+  loadMembers,
+  login,
+  lookupInvite,
+  register,
+  removeUser,
+  revokeInvite,
+  signOut,
+} from '../auth/session';
 import { toast } from '../ui/prefs';
 import Dialog from './Dialog';
 
 const day = new Intl.DateTimeFormat('ar-SA', { weekday: 'long', day: 'numeric', month: 'long' });
+const date = new Intl.DateTimeFormat('ar-SA', { day: 'numeric', month: 'long', year: 'numeric' });
 
 export default function AccountDialog({ onClose, onOpen }) {
   const name = useStore(authStore, (s) => s.name);
@@ -66,7 +79,7 @@ function Credentials({ name, setName, pass, setPass, newAccount }) {
           onChange={(e) => setName(e.target.value)}
           autoComplete="username"
           spellCheck="false"
-          maxLength={24}
+          maxLength={64}
           dir="auto"
           required
         />
@@ -155,7 +168,7 @@ function RegisterForm({ code }) {
         دعاك <b>{invite.by}</b> لتكون مذيعاً في المجلس. الرابط صالح لحساب واحد فقط.
       </p>
       <Credentials name={name} setName={setName} pass={pass} setPass={setPass} newAccount />
-      <p className="hint">الاسم من 3 إلى 24 حرفاً أو رقماً. كلمة المرور 8 أحرف على الأقل.</p>
+      <p className="hint">الاسم من 3 إلى 64 حرفاً أو رقماً، ويصلح البريد الإلكتروني. كلمة المرور 8 أحرف على الأقل.</p>
       {error && (
         <p className="settings-warn" role="alert">
           {error}
@@ -172,11 +185,15 @@ function RegisterForm({ code }) {
 }
 
 function AccountPanel({ onOpen }) {
+  const owner = useStore(authStore, (s) => s.owner);
   const [invite, setInvite] = useState(null); // { link, expires }
   const [copied, setCopied] = useState(false);
+  // Bumped after every change so the owner's lists reload.
+  const [rev, setRev] = useState(0);
   const { busy, error, submit } = useSubmit(async () => {
     setInvite(await createInvite());
     setCopied(false);
+    setRev((n) => n + 1);
   });
 
   const copy = async () => {
@@ -219,6 +236,9 @@ function AccountPanel({ onOpen }) {
         </div>
       </form>
 
+      {owner && <Members rev={rev} onChange={() => setRev((n) => n + 1)} />}
+      <PasswordForm />
+
       <div className="settings-actions">
         <button
           type="button"
@@ -236,6 +256,182 @@ function AccountPanel({ onOpen }) {
           ابدأ البث
         </button>
       </div>
+    </>
+  );
+}
+
+function PasswordForm() {
+  const name = useStore(authStore, (s) => s.name);
+  const [current, setCurrent] = useState('');
+  const [pass, setPass] = useState('');
+  const { busy, error, submit } = useSubmit(async () => {
+    await changePassword(current, pass);
+    setCurrent('');
+    setPass('');
+    toast('تم تغيير كلمة المرور');
+  });
+
+  return (
+    <form className="settings-group" onSubmit={submit}>
+      <h3 className="settings-group__title">
+        <KeyRound size={16} />
+        تغيير كلمة المرور
+      </h3>
+      {/* Tells password managers which account the new password belongs to. */}
+      <input type="text" value={name} autoComplete="username" readOnly hidden />
+      <div className="settings-grid settings-grid--even">
+        <div>
+          <label className="label" htmlFor="acc-current">
+            كلمة المرور الحالية
+          </label>
+          <input
+            id="acc-current"
+            className="field"
+            type="password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            autoComplete="current-password"
+            dir="ltr"
+            required
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="acc-new">
+            كلمة المرور الجديدة
+          </label>
+          <input
+            id="acc-new"
+            className="field"
+            type="password"
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            autoComplete="new-password"
+            minLength={8}
+            maxLength={128}
+            dir="ltr"
+            required
+          />
+        </div>
+      </div>
+      {error && (
+        <p className="settings-warn" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="settings-actions">
+        <span className="faint settings-url">8 أحرف على الأقل. تغييرها يُخرج أجهزتك الأخرى من الحساب.</span>
+        <button type="submit" className="btn btn--sm" disabled={busy || !current || pass.length < 8}>
+          {busy ? <LoaderCircle size={15} className="spin" /> : <KeyRound size={15} />}
+          حفظ
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Owner only. Removing anything takes a second click on the same button.
+function Members({ rev, onChange }) {
+  const [data, setData] = useState(null); // { users, invites } | { error }
+  const [armed, setArmed] = useState('');
+  const [busy, setBusy] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    loadMembers().then(
+      (d) => live && setData(d),
+      (err) => live && setData({ error: err.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [rev]);
+
+  const remove = async (id, run, done) => {
+    if (armed !== id) {
+      setArmed(id);
+      return;
+    }
+    setArmed('');
+    setBusy(id);
+    try {
+      await run();
+      toast(done);
+      onChange();
+    } catch (err) {
+      toast(err.message, 'warn');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const removeButton = (id, label, run, done) => (
+    <button type="button" className="btn btn--sm" disabled={busy === id} onClick={() => remove(id, run, done)} onBlur={() => setArmed('')}>
+      {busy === id ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}
+      {armed === id ? 'تأكيد' : label}
+    </button>
+  );
+
+  return (
+    <>
+      <div className="settings-group">
+        <h3 className="settings-group__title">
+          <Users size={16} />
+          المذيعون
+          {data?.users && <span className="faint num">{data.users.length}</span>}
+        </h3>
+        {!data && <p className="settings-note">نحمّل القائمة…</p>}
+        {data?.error && (
+          <p className="settings-warn" role="alert">
+            {data.error}
+          </p>
+        )}
+        {data?.users && (
+          <div>
+            {data.users.map((u) => (
+              <div className="copy-row" key={u.name}>
+                <span className="copy-row__val">
+                  <bdi>{u.name}</bdi>
+                  <span className="faint">
+                    {' — '}
+                    {u.by ? (
+                      <>
+                        دعاه <bdi>{u.by}</bdi>
+                      </>
+                    ) : (
+                      'صاحب المجلس'
+                    )}
+                    ، {date.format(u.created)}
+                  </span>
+                </span>
+                {u.by && removeButton(`u:${u.name}`, 'حذف', () => removeUser(u.name), `حُذف حساب ${u.name}`)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {data?.invites?.length > 0 && (
+        <div className="settings-group">
+          <h3 className="settings-group__title">
+            <UserPlus size={16} />
+            دعوات لم تُستخدم
+          </h3>
+          <div>
+            {data.invites.map((i) => (
+              <div className="copy-row" key={i.code}>
+                <span className="copy-row__val">
+                  <span className="mono">{i.code.slice(0, 6)}…</span>
+                  <span className="faint">
+                    {' — من '}
+                    <bdi>{i.by}</bdi>، حتى {day.format(i.expires)}
+                  </span>
+                </span>
+                {removeButton(`i:${i.code}`, 'إلغاء', () => revokeInvite(i.code), 'أُلغيت الدعوة')}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   );
 }

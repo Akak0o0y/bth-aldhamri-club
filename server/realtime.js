@@ -6,7 +6,23 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
-import { checkPassword, createInvite, getInvite, issueToken, readToken, redeemInvite, seedAdmin, validName, validPass } from './accounts.js';
+import {
+  changePassword,
+  checkPassword,
+  createInvite,
+  getInvite,
+  isOwner,
+  issueToken,
+  listInvites,
+  listUsers,
+  readToken,
+  redeemInvite,
+  removeUser,
+  revokeInvite,
+  seedAdmin,
+  validName,
+  validPass,
+} from './accounts.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 // Shared with MediaMTX so only it can ask /mtx/auth; unset means deny all.
@@ -165,7 +181,7 @@ const handlers = {
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
 };
 
 function reply(res, status, body = {}) {
@@ -208,6 +224,14 @@ function guessAllowed(who) {
 }
 const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
 
+// Owner-only routes: true for the owner's token; otherwise replies and is false.
+function owner(req, res) {
+  const name = readToken(bearer(req));
+  if (name && isOwner(name)) return true;
+  reply(res, name ? 403 : 401, { error: name ? 'owner' : 'session' });
+  return false;
+}
+
 // MediaMTX asks before each publish to a main path (reads and voice paths are
 // excluded in its config). A session token passes, and so does an account's
 // name + password — OBS sends "name:password" as its Bearer token.
@@ -232,6 +256,8 @@ async function route(req, res) {
   const url = new URL(req.url, 'http://relay');
   const { pathname: path } = url;
   const post = req.method === 'POST';
+  const get = req.method === 'GET';
+  const del = req.method === 'DELETE';
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS);
     return res.end();
@@ -242,17 +268,38 @@ async function route(req, res) {
     if (!guessAllowed(clientIp(req))) return reply(res, 429, { error: 'busy' });
     const b = await readBody(req);
     const name = await checkPassword(b.name, b.pass);
-    return name ? reply(res, 200, { name, token: issueToken(name) }) : reply(res, 401, { error: 'login' });
+    return name ? reply(res, 200, { name, owner: isOwner(name), token: issueToken(name) }) : reply(res, 401, { error: 'login' });
   }
   if (path === '/api/me') {
     const name = readToken(bearer(req));
-    return name ? reply(res, 200, { name }) : reply(res, 401, { error: 'session' });
+    return name ? reply(res, 200, { name, owner: isOwner(name) }) : reply(res, 401, { error: 'session' });
+  }
+  if (post && path === '/api/password') {
+    const name = readToken(bearer(req));
+    if (!name) return reply(res, 401, { error: 'session' });
+    const b = await readBody(req);
+    if (!validPass(b.pass)) return reply(res, 400, { error: 'pass' });
+    if (!guessAllowed(clientIp(req))) return reply(res, 429, { error: 'busy' });
+    if (!(await changePassword(name, b.current, b.pass))) return reply(res, 403, { error: 'current' });
+    // Every other device is now signed out; this one carries on with a new token.
+    return reply(res, 200, { token: issueToken(name) });
   }
   if (post && path === '/api/invites') {
     const name = readToken(bearer(req));
     return name ? reply(res, 200, createInvite(name)) : reply(res, 401, { error: 'session' });
   }
+  if (get && path === '/api/users') return owner(req, res) && reply(res, 200, { users: listUsers() });
+  if (get && path === '/api/invites') return owner(req, res) && reply(res, 200, { invites: listInvites() });
+  const user = /^\/api\/users\/([^/]+)$/.exec(path)?.[1];
+  if (del && user) {
+    if (!owner(req, res)) return;
+    return removeUser(decodeURIComponent(user)) ? reply(res, 200) : reply(res, 404, { error: 'user' });
+  }
   const code = /^\/api\/invites\/([\w-]{6,32})$/.exec(path)?.[1];
+  if (del && code) {
+    if (!owner(req, res)) return;
+    return revokeInvite(code) ? reply(res, 200) : reply(res, 404, { error: 'invite' });
+  }
   if (code) {
     const invite = getInvite(code);
     return invite ? reply(res, 200, { by: invite.by, expires: invite.expires }) : reply(res, 404, { error: 'invite' });
