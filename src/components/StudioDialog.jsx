@@ -340,6 +340,10 @@ function SetupPanel({ onClose, onOpen }) {
               <li>
                 <b>Look-ahead</b> و <b>Psycho Visual Tuning:</b> إيقاف
               </li>
+              <li>
+                <b>Advanced ← Video:</b> <code>NV12</code> · <code>Rec. 709</code> · <b>Color Range:</b> <code>Limited</code> — نفس ألوان
+                مصدرك عند المشاهدين بدون باهت
+              </li>
             </ul>
           </section>
         </div>

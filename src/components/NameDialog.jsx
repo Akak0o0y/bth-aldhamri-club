@@ -3,8 +3,8 @@ import { UserRound } from 'lucide-react';
 import { setPref } from '../ui/prefs';
 import Dialog from './Dialog';
 
-// A visitor's first stop (usually from an invite link): the name the chat and
-// the voice lounge will show, instead of everyone being a nameless guest.
+// A visitor's first stop on each device: the name the chat, the voice lounge
+// and the "who's here" list show. It can't be skipped; it's kept per device.
 export default function NameDialog({ onClose }) {
   const [name, setName] = useState('');
   const inputRef = useRef(null);
@@ -25,7 +25,7 @@ export default function NameDialog({ onClose }) {
   };
 
   return (
-    <Dialog title="أهلاً بك في المجلس" subtitle="اكتب اسمك ليظهر في الشات والديوانية الصوتية" icon={UserRound} onClose={onClose}>
+    <Dialog title="أهلاً بك في المجلس" subtitle="اكتب اسمك ليظهر في الشات والديوانية الصوتية" icon={UserRound} onClose={onClose} required>
       <form className="settings-group" onSubmit={save}>
         <label className="label" htmlFor="guest-name">
           اسمك

@@ -25,6 +25,8 @@ const AccountDialog = lazy(loadAccount);
 
 // The default chat name in ui/prefs.js until a visitor picks their own.
 const GUEST_NAME = 'ضيف المجلس';
+// Every device needs a name (streamers use their account's).
+const needsName = () => !authStore.get().name && prefsStore.get().username === GUEST_NAME;
 
 // One delegated listener gives every pressable control a ripple from the
 // exact press point (CSS: .rippling::after).
@@ -47,12 +49,13 @@ export default function App() {
   const eco = useStore(prefsStore, (s) => s.eco);
   const theater = useStore(prefsStore, (s) => s.theater);
   // A streamer invite (?invite=CODE) opens straight onto the sign-up form; any
-  // other visitor without a name yet is asked for one for the chat and mic.
+  // other visitor without a name yet is asked for one for the chat and mic,
+  // and closing another dialog brings that question back until it's answered.
   const [dialog, setDialog] = useState(() => {
     if (inviteCode()) return 'account';
-    return !authStore.get().name && prefsStore.get().username === GUEST_NAME ? 'name' : null;
+    return needsName() ? 'name' : null;
   });
-  const close = useCallback(() => setDialog(null), []);
+  const close = useCallback(() => setDialog(needsName() ? 'name' : null), []);
 
   useEffect(() => {
     const { sfx, sfxVolume } = prefsStore.get();

@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
-export default function Dialog({ title, subtitle, icon: Icon, onClose, size = 'md', children }) {
+// `required`: no Esc, backdrop or close button — the form inside must be done.
+export default function Dialog({ title, subtitle, icon: Icon, onClose, size = 'md', required = false, children }) {
   const ref = useRef(null);
   const titleId = useId();
   const [closing, setClosing] = useState(false);
@@ -28,10 +29,10 @@ export default function Dialog({ title, subtitle, icon: Icon, onClose, size = 'm
       aria-labelledby={titleId}
       onCancel={(e) => {
         e.preventDefault();
-        requestClose();
+        if (!required) requestClose();
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) requestClose();
+        if (!required && e.target === e.currentTarget) requestClose();
       }}
     >
       <div className="dialog__panel">
@@ -45,9 +46,11 @@ export default function Dialog({ title, subtitle, icon: Icon, onClose, size = 'm
             <h2 id={titleId}>{title}</h2>
             {subtitle && <p>{subtitle}</p>}
           </div>
-          <button className="btn btn--ghost btn--icon btn--sm" onClick={requestClose} aria-label="إغلاق">
-            <X size={18} />
-          </button>
+          {!required && (
+            <button className="btn btn--ghost btn--icon btn--sm" onClick={requestClose} aria-label="إغلاق">
+              <X size={18} />
+            </button>
+          )}
         </header>
         <div className="dialog__body">{children}</div>
       </div>

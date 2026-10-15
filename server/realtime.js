@@ -61,10 +61,15 @@ function tally(room) {
   return out;
 }
 
+// Who's here, one name per device: tabs of one browser share a voter id.
 function presence(room) {
   const voice = [];
-  for (const c of room.clients) if (c.voice) voice.push({ id: c.id, name: c.name, host: c.host, ...c.voice });
-  return { t: 'presence', online: room.clients.size, voice };
+  const people = new Map();
+  for (const c of room.clients) {
+    if (c.voice) voice.push({ id: c.id, name: c.name, host: c.host, ...c.voice });
+    if (!people.has(c.voter)) people.set(c.voter, c.name);
+  }
+  return { t: 'presence', online: people.size, voice, people: [...people.values()].slice(0, 100) };
 }
 
 // Token bucket: 10 burst, 2 per second after that. Extra frames are dropped.
@@ -176,7 +181,8 @@ const handlers = {
     const name = clean(msg.name, 32);
     if (!name || name === ws.name) return;
     ws.name = name;
-    if (ws.voice) broadcast(ws.room, presence(ws.room));
+    // Everyone's "who's here" list shows it; the token bucket stops spam.
+    if (allow(ws)) broadcast(ws.room, presence(ws.room));
   },
 
   host(ws, msg) {

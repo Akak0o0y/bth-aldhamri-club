@@ -36,8 +36,9 @@ export const rtStore = createStore({
   messages: [],
   votes: {},
   myVote: null,
-  online: 0,
+  online: 0, // devices in the room
   voice: [], // [{ id, name, host, mic, hand }]
+  people: [], // one name per device in the room
 });
 
 const set = rtStore.set;
@@ -96,7 +97,7 @@ function reconnect() {
   ws = null;
   old?.close();
   retries = 0;
-  set({ messages: [], votes: {}, myVote: null, online: 0, voice: [] });
+  set({ messages: [], votes: {}, myVote: null, online: 0, voice: [], people: [] });
   connect();
 }
 
@@ -131,7 +132,7 @@ function receive(msg) {
       set(msg.myVote ? { votes: msg.votes, myVote: msg.myVote } : { votes: msg.votes });
       break;
     case 'presence':
-      set({ online: msg.online, voice: msg.voice });
+      set({ online: msg.online, voice: msg.voice, people: msg.people || [] });
       break;
     // The streamer started a new broadcast: its chat starts over.
     case 'clear':

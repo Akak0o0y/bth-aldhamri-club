@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { Fragment, memo } from 'react';
 import { Crown, Hand, HeadphoneOff, Headphones, LogOut, Mic, MicOff } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { rtStore } from '../realtime/channel';
@@ -14,6 +14,7 @@ function statusText(m, talking) {
 function VoiceLounge() {
   const members = useStore(rtStore, (s) => s.voice);
   const online = useStore(rtStore, (s) => s.online);
+  const people = useStore(rtStore, (s) => s.people);
   const you = useStore(rtStore, (s) => s.you);
   const open = useStore(rtStore, (s) => s.status === 'open');
   const joined = useStore(voiceStore, (s) => s.joined);
@@ -33,6 +34,18 @@ function VoiceLounge() {
           <p>
             <span className="num">{online}</span> في المجلس · <span className="num">{members.length}</span> في الديوانية
           </p>
+          {people.length > 0 && (
+            <p title={people.join('، ')}>
+              الحضور:{' '}
+              {people.slice(0, 12).map((name, i) => (
+                <Fragment key={i}>
+                  {i > 0 && '، '}
+                  <bdi>{name}</bdi>
+                </Fragment>
+              ))}
+              {people.length > 12 && ` و${people.length - 12} آخرين`}
+            </p>
+          )}
         </div>
         <div className="lounge__actions">
           {joined ? (
