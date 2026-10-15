@@ -14,7 +14,8 @@ const DIR = process.env.DATA_DIR || fileURLToPath(new URL('./data/', import.meta
 const FILE = join(DIR, 'accounts.json');
 const TOKEN_TTL = 30 * 24 * 60 * 60 * 1000;
 const INVITE_TTL = 7 * 24 * 60 * 60 * 1000;
-const NAME = /^[\p{L}\p{N}_.-]{3,24}$/u;
+// Letters/digits in any script plus _ . - and @ + so an email works as a name.
+const NAME = /^[\p{L}\p{N}_.@+-]{3,64}$/u;
 // Without AUTH_SECRET (local dev) sessions simply end when the process restarts.
 const SECRET = process.env.AUTH_SECRET || randomBytes(32).toString('hex');
 
