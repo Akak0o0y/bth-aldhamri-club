@@ -38,11 +38,38 @@ function announce() {
   sendVoice(joined ? { mic: mic === 'live', hand } : { on: false });
 }
 
+// Other tabs of this browser never play each other's mic: with the site open
+// twice, your own voice would come back half a second later as an echo. Tabs
+// tell each other their lounge id over a BroadcastChannel (same profile only).
+const siblings = new Set();
+const tabs = typeof BroadcastChannel === 'function' ? new BroadcastChannel('majlis-voice') : null;
+let announcedId = null;
+
+function shareId() {
+  const { you } = rtStore.get();
+  if (!tabs || !you || you === announcedId) return;
+  if (announcedId) tabs.postMessage({ t: 'bye', id: announcedId });
+  announcedId = you;
+  tabs.postMessage({ t: 'here', id: you });
+}
+
+tabs?.addEventListener('message', ({ data }) => {
+  if (!data || typeof data.id !== 'string') return;
+  if (data.t === 'hello') {
+    // A newly opened tab asks who's around; answer it.
+    if (announcedId) tabs.postMessage({ t: 'here', id: announcedId });
+    return;
+  }
+  if (data.t === 'bye') siblings.delete(data.id);
+  else if (data.t === 'here') siblings.add(data.id);
+  sync();
+});
+
 // Pull exactly the open mics in the roster, nothing more.
 function sync() {
   const { joined, deaf } = voiceStore.get();
   const { voice, you } = rtStore.get();
-  const live = new Set(joined ? voice.filter((m) => m.mic && m.id !== you).map((m) => m.id) : []);
+  const live = new Set(joined ? voice.filter((m) => m.mic && m.id !== you && !siblings.has(m.id)).map((m) => m.id) : []);
 
   for (const [id, entry] of players) {
     if (live.has(id)) continue;
@@ -232,6 +259,7 @@ export function toggleHand() {
 
 let lastVoice = null;
 rtStore.subscribe(() => {
+  shareId();
   const { voice } = rtStore.get();
   if (voice === lastVoice) return;
   lastVoice = voice;
@@ -246,4 +274,8 @@ onRealtimeOpen(() => {
 addEventListener('pagehide', () => {
   publisher?.stop();
   for (const { player } of players.values()) player.stop();
+  if (announcedId) tabs?.postMessage({ t: 'bye', id: announcedId });
 });
+
+// Learn the ids of tabs that were already open before this one.
+tabs?.postMessage({ t: 'hello', id: '' });
