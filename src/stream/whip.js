@@ -51,20 +51,16 @@ export class WhipPublisher {
     enc.maxBitrate = this.#opts.videoKbps * 1000;
     enc.maxFramerate = this.#opts.fps;
     if (scaleDown) enc.scaleResolutionDownBy = scaleDown;
-    // The streamer's chosen resolution is never shrunk: when the CPU or the
-    // network can't keep up, the encoder gives up detail or frames instead.
-    // Newer Chrome keeps the frame rate too; older browsers fall back.
-    for (const pref of ['maintain-framerate-and-resolution', 'maintain-resolution']) {
-      try {
-        params.degradationPreference = pref;
-        await sender.setParameters(params);
-        return;
-      } catch {
-        // Unknown to this browser: try the next one.
-      }
+    // What stays fixed when the CPU or network can't keep up is the
+    // streamer's choice: games and films keep the frame rate (resolution
+    // steps down while overloaded), screens and text keep the resolution.
+    params.degradationPreference = this.#opts.contentHint === 'motion' ? 'maintain-framerate' : 'maintain-resolution';
+    try {
+      await sender.setParameters(params);
+    } catch {
+      delete params.degradationPreference;
+      await sender.setParameters(params).catch(() => {});
     }
-    delete params.degradationPreference;
-    await sender.setParameters(params).catch(() => {});
   }
 
   #status(status, message = '') {

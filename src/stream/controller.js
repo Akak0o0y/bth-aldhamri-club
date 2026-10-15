@@ -113,9 +113,11 @@ function cpuGuard(stats) {
   cpuStrikes = stats.limitation === 'cpu' ? cpuStrikes + 1 : Math.max(0, cpuStrikes - 1);
   if (cpuStrikes < 6) return;
   cpuStrikes = 0;
-  // The chosen resolution and frame rate stay; just say why frames may drop.
+  // The encoder already gives way as the streamer chose (see WhipPublisher):
+  // just say what's happening and how to avoid it.
   set({ publish: { ...pub, guarded: true } });
-  toast('جهازك لا يلحق على هذه الدقة — نحافظ عليها لكن قد تقل الإطارات. الحل: OBS مع كرت الشاشة (NVENC/AMF)', 'warn');
+  const gave = pub.contentHint === 'motion' ? 'نثبّت الإطارات ونخفض الدقة مؤقتاً' : 'نثبّت الدقة لكن قد تقل الإطارات';
+  toast(`المعالج لا يلحق — ${gave}. لتثبيت الاثنين: OBS مع كرت الشاشة (NVENC/AMF)`, 'warn');
 }
 
 // --- watching --------------------------------------------------------------
