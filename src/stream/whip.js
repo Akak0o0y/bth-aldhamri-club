@@ -154,6 +154,13 @@ export class WhipPublisher {
         body: tunePublisherOffer(offer.sdp, o),
       });
       if (!live()) return;
+      if (res.status === 401 || res.status === 403) {
+        // Missing or wrong publish password: retrying can't fix that.
+        this.#teardown();
+        this.#status('unauthorized', o.user ? 'كلمة مرور البث غير صحيحة — صحّحها من الإعدادات' : 'البث يحتاج اسم مستخدم وكلمة مرور — أدخلها من الإعدادات');
+        this.#stopped = true;
+        return;
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         let detail = text;

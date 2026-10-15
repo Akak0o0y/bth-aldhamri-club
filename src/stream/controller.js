@@ -210,6 +210,12 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
     music,
     audioKbps: music ? 128 : 64,
     onStatus: (status, message) => {
+      if (status === 'unauthorized') {
+        // Say why once and go back to watching instead of a stuck red chip.
+        toast(message, 'warn');
+        stopLive();
+        return;
+      }
       set({ status, message });
       if (status === 'live') startStats(current.pc, 'host');
       else {

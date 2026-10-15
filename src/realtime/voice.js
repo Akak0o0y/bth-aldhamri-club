@@ -141,6 +141,12 @@ function publish() {
         voiceStore.set({ mic: 'live' });
         return announce();
       }
+      if (status === 'unauthorized') {
+        // The server refused voice publishing for this room; don't loop.
+        closeMic();
+        announce();
+        return toast('السيرفر لا يسمح بفتح المايك في هذه الغرفة', 'warn');
+      }
       if (voiceStore.get().mic === 'live') {
         voiceStore.set({ mic: 'connecting' });
         announce();
