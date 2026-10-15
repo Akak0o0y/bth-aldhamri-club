@@ -4,8 +4,9 @@ import { readJSON, writeJSON } from '../lib/store';
 
 const KEY = 'majlis.stream.v1';
 
-// Railway project "majlis-dhamrah" (ams): media over ICE-TCP via its TCP proxy.
-export const CLOUD_MEDIAMTX_URL = 'https://mediamtx-production-dc92.up.railway.app';
+// Oracle Always Free VM in Riyadh (server/gulf/setup.sh): WebRTC over UDP near
+// the viewers, with a TCP fallback on the same port.
+export const CLOUD_MEDIAMTX_URL = 'https://145-241-106-1.sslip.io';
 
 // Everything runs in the cloud — no local media server by default.
 // VITE_MEDIAMTX_URL overrides it at build time; ?server= overrides per link.
@@ -14,7 +15,9 @@ function defaultServer() {
 }
 
 const LOCAL_SERVER = /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/;
-const RETIRED_SERVERS = ['https://mediamtx-production-cb12.up.railway.app'];
+// Railway's MediaMTX (ICE over TCP only, in Amsterdam) is kept as a spare, but
+// browsers that saved it move to the UDP server above.
+const RETIRED_SERVERS = ['https://mediamtx-production-cb12.up.railway.app', 'https://mediamtx-production-dc92.up.railway.app'];
 
 const cleanServer = (value) => value.trim().replace(/\/+$/, '');
 const cleanRoom = (value) => value.trim().replace(/^\/+|\/+$/g, '') || 'majlis';

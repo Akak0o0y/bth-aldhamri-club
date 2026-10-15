@@ -14,7 +14,7 @@
 
 2. **سيرفر البث المباشر (Cloud Media Server - MediaMTX)**
    - يعمل على السحابة عبر حاوية Docker على منصة **Railway**:
-   - رابط السيرفر السحابي: `https://mediamtx-production-dc92.up.railway.app`
+   - رابط السيرفر السحابي: `https://145-241-106-1.sslip.io`
    - الوسائط تمر عبر ICE-TCP (منفذ `iriguchi.proxy.rlwy.net:16534`) لأن Railway لا يفتح UDP — الإعداد في `server/mediamtx/`.
    - المشاهدة والديوانية الصوتية مفتوحة للجميع، أما بث المجلس الرئيسي فلأصحاب الحسابات فقط: يسأل MediaMTX سيرفر التفاعل (عبر شبكة Railway الداخلية) قبل كل بث.
    - يدعم بروتوكولات **WHIP** (لبث الفيديو والصوت من المتصفح أو OBS) و **WHEP** (لمشاهدة البث بأقل من 500ms).
@@ -50,7 +50,7 @@
 ### ٢. من برنامج OBS Studio
 - افتح إعدادات OBS: `Settings -> Stream`
 - Service: `WHIP`
-- Server: `https://mediamtx-production-dc92.up.railway.app/majlis/whip`
+- Server: `https://145-241-106-1.sslip.io/majlis/whip`
 - Bearer Token: `اسم-حسابك:كلمة-المرور` (أي حساب مذيع).
 - اضغط **Start Streaming**.
 

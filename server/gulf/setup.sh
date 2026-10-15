@@ -30,7 +30,7 @@ cd "$TMP"
 echo "== MediaMTX $MEDIAMTX_VERSION ($ARCH)"
 M="mediamtx_v${MEDIAMTX_VERSION}_linux_${ARCH}.tar.gz"
 curl -fsSLO "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/$M"
-curl -fsSL "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/checksums.sha256" | grep " $M\$" | sha256sum -c -
+curl -fsSL "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/checksums.sha256" | grep -E " \*?$M\$" | sha256sum -c -
 tar -xzf "$M" mediamtx
 install -m 0755 mediamtx /usr/local/bin/mediamtx
 
