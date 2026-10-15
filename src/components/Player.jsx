@@ -102,6 +102,31 @@ export default function Player({ onOpen }) {
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
+  // Switching to another app or tab keeps the stream playing in a floating
+  // window. Safari: autoPictureInPicture. Chrome: the Media Session
+  // 'enterpictureinpicture' action, which the browser fires itself when the
+  // page goes to the background (Android Chrome also does it for fullscreen
+  // video on its own). The streamer's own preview doesn't need it.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || isHost) return;
+    video.autoPictureInPicture = true;
+    const session = navigator.mediaSession;
+    try {
+      session?.setActionHandler('enterpictureinpicture', () => video.requestPictureInPicture().catch(() => {}));
+    } catch {
+      // This browser has no automatic picture-in-picture.
+    }
+    return () => {
+      video.autoPictureInPicture = false;
+      try {
+        session?.setActionHandler('enterpictureinpicture', null);
+      } catch {
+        // Never registered.
+      }
+    };
+  }, [isHost]);
+
   // Controls auto-hide. setState only fires on hidden<->visible flips, not
   // on every mouse move.
   const poke = useCallback(() => {

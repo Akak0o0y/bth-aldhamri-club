@@ -94,13 +94,14 @@ function tcpGuard(stats) {
   const pub = streamStore.get().publish;
   if (!pub || !publisher || pub.tcpCap || stats.protocol !== 'tcp') return;
   const height = PRESETS.find((p) => p.id === pub.presetId)?.height ?? 1080;
-  const tcpCap = height > 720 ? 3000 : 2500;
+  // Resolution and frame rate stay as chosen; only the bitrate is capped, or
+  // TCP's queueing would push the delay to seconds.
+  const tcpCap = height > 1080 ? 6000 : height > 720 ? 4000 : 2500;
   const kbps = Math.min(pub.kbps, tcpCap);
-  const fps = Math.min(pub.fps, 30);
-  publisher.updateEncoding({ videoKbps: kbps, fps, scaleDown: height > 1080 ? height / 1080 : undefined });
-  set({ publish: { ...pub, kbps, fps, tcpCap } });
-  if (kbps < pub.kbps || fps < pub.fps) {
-    toast(`السيرفر يعمل عبر TCP — خفّضنا البث إلى ${kbps / 1000} Mbps و${fps} إطاراً ليبقى التأخير أقل من ثانية`, 'warn');
+  publisher.updateEncoding({ videoKbps: kbps });
+  set({ publish: { ...pub, kbps, tcpCap } });
+  if (kbps < pub.kbps) {
+    toast(`شبكتك تمنع UDP فالبث يمر عبر TCP — حدّدنا البث بـ ${kbps / 1000} Mbps مع نفس الدقة ليبقى التأخير قليلاً`, 'warn');
   }
 }
 
@@ -112,14 +113,9 @@ function cpuGuard(stats) {
   cpuStrikes = stats.limitation === 'cpu' ? cpuStrikes + 1 : Math.max(0, cpuStrikes - 1);
   if (cpuStrikes < 6) return;
   cpuStrikes = 0;
-  if (pub.fps > 30) {
-    publisher.updateEncoding({ fps: 30 });
-    set({ publish: { ...pub, fps: 30, guarded: true } });
-    toast('المعالج مضغوط — خفّضنا البث إلى 30 إطار للحفاظ على السلاسة', 'warn');
-  } else {
-    set({ publish: { ...pub, guarded: true } });
-    toast('المعالج مضغوط — جرّب دقة أقل أو كودك يعمل بكرت الشاشة', 'warn');
-  }
+  // The chosen resolution and frame rate stay; just say why frames may drop.
+  set({ publish: { ...pub, guarded: true } });
+  toast('جهازك لا يلحق على هذه الدقة — نحافظ عليها لكن قد تقل الإطارات. الحل: OBS مع كرت الشاشة (NVENC/AMF)', 'warn');
 }
 
 // --- watching --------------------------------------------------------------
