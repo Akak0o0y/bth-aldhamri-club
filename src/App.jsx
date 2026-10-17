@@ -94,7 +94,7 @@ export default function App() {
 
       <main className="layout">
         <section className="stage">
-          <Player onOpen={setDialog} />
+          <Player onOpen={setDialog} controlBlocked={Boolean(dialog)} />
           <StreamBar />
           <VoiceLounge />
         </section>

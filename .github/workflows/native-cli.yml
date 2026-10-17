@@ -2,9 +2,9 @@ name: Native broadcaster
 on:
   push:
     branches: [main, 'codex/**']
-    paths: ['tools/dhamri/**', 'tests/**', 'src/stream/**', 'server/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
+    paths: ['tools/dhamri/**', 'tests/**', 'src/**', 'server/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
   pull_request:
-    paths: ['tools/dhamri/**', 'tests/**', 'src/stream/**', 'server/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
+    paths: ['tools/dhamri/**', 'tests/**', 'src/**', 'server/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
   workflow_dispatch:
 
 permissions:

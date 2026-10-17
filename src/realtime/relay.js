@@ -1,5 +1,6 @@
 // Where the realtime relay (server/realtime.js) lives. It carries the chat
 // socket and the streamer-accounts API, so both read their address here.
+import { trustedRelay } from './trustedRelay';
 
 export const CLOUD_REALTIME_URL = 'wss://realtime-production-988e.up.railway.app';
 
@@ -16,4 +17,7 @@ export function relayUrl() {
 }
 
 // Same server over HTTP(S), for the accounts API.
-export const relayHttpUrl = () => relayUrl().replace(/^ws/, 'http');
+export const relayHttpUrl = () => trustedRelay(relayUrl(), {
+  pageUrl: location.href,
+  trustedRelay: import.meta.env.VITE_REALTIME_URL || CLOUD_REALTIME_URL,
+}).replace(/^ws/, 'http');

@@ -29,6 +29,7 @@ import { soundFX } from '../services/soundEffects';
 import { emitReaction, prefsStore, reactionsStore, setPref } from '../ui/prefs';
 import { BrandMark } from './Brand';
 import StatsPanel from './StatsPanel';
+import RemoteControl from './RemoteControl';
 
 const typingTarget = (el) => el?.closest?.('input, textarea, select, [contenteditable="true"], dialog');
 
@@ -41,7 +42,7 @@ const QUICK_REACTIONS = [
   { key: 'fire', label: 'حماس', play: () => soundFX.playHype() },
 ];
 
-export default function Player({ onOpen }) {
+export default function Player({ onOpen, controlBlocked = false }) {
   const role = useStore(streamStore, (s) => s.role);
   const status = useStore(streamStore, (s) => s.status);
   const message = useStore(streamStore, (s) => s.message);
@@ -64,6 +65,7 @@ export default function Player({ onOpen }) {
   const [showStats, setShowStats] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [remoteActive, setRemoteActive] = useState(false);
 
   const isHost = role === 'host';
   const hasVideo = Boolean(stream) && !(isHost && previewHidden);
@@ -184,6 +186,7 @@ export default function Player({ onOpen }) {
 
   useEffect(() => {
     const onKey = (e) => {
+      if (remoteActive) return;
       if (e.ctrlKey || e.metaKey || e.altKey || typingTarget(e.target)) return;
       // e.code works with the Arabic keyboard layout too.
       const actions = {
@@ -203,7 +206,7 @@ export default function Player({ onOpen }) {
     };
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
-  }, [toggleFullscreen, toggleMute, toggleTheater, togglePip, togglePause, poke]);
+  }, [toggleFullscreen, toggleMute, toggleTheater, togglePip, togglePause, poke, remoteActive]);
 
   const controlsVisible = controls || paused || !showVideo;
   const pipSupported = typeof document !== 'undefined' && document.pictureInPictureEnabled;
@@ -211,7 +214,7 @@ export default function Player({ onOpen }) {
   return (
     <div
       ref={rootRef}
-      className={`player rise ${controlsVisible ? 'show-ui' : ''} ${showVideo ? 'has-video' : ''}`}
+      className={`player rise ${controlsVisible ? 'show-ui' : ''} ${showVideo ? 'has-video' : ''} ${remoteActive ? 'is-controlling' : ''}`}
       style={{ '--i': 1 }}
       onPointerMove={poke}
       onPointerDown={(e) => e.pointerType === 'touch' && poke()}
@@ -223,7 +226,9 @@ export default function Player({ onOpen }) {
           playsInline
           autoPlay
           disableRemotePlayback
-          onDoubleClick={toggleFullscreen}
+          tabIndex={remoteActive ? 0 : -1}
+          aria-label={remoteActive ? 'سطح التحكم بلابتوب المذيع' : 'البث المباشر'}
+          onDoubleClick={remoteActive ? undefined : toggleFullscreen}
         />
 
         {!showVideo && (
@@ -347,6 +352,7 @@ export default function Player({ onOpen }) {
           </div>
         </div>
       </div>
+      {!isHost && <RemoteControl videoRef={videoRef} room={config.room} stream={stream} enabled={status === 'live' && !paused && !controlBlocked} onOpen={onOpen} onActive={setRemoteActive} />}
     </div>
   );
 }

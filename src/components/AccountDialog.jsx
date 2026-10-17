@@ -41,7 +41,7 @@ export default function AccountDialog({ onClose, onOpen }) {
     );
   }
   return (
-    <Dialog title="دخول المذيعين" subtitle="البث لأصحاب الحسابات — المشاهدة متاحة للجميع" icon={LogIn} onClose={onClose}>
+    <Dialog title="تسجيل الدخول" subtitle="ادخل للبث أو طلب التحكم — المشاهدة متاحة للجميع" icon={LogIn} onClose={onClose}>
       <LoginForm />
     </Dialog>
   );
