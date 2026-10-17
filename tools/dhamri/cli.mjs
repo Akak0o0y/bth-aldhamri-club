@@ -9,6 +9,8 @@ import { run, failureDetail } from './process.mjs';
 import { prompt, loginRequest, saveSession, loadSession, sessionPath } from './auth.mjs';
 import { createWhipProxy } from './proxy.mjs';
 import { startHevcBridge } from './bridge.mjs';
+import { startControlHost } from './control-host.mjs';
+import { launchViewer } from './viewer.mjs';
 
 const HELP = `Dhamri native broadcaster for Windows 10/11
 
@@ -20,6 +22,9 @@ const HELP = `Dhamri native broadcaster for Windows 10/11
   dhamri start --codec hevc            HEVC for compatible viewer browsers/GPUs
   dhamri start --file "video.mp4"       Broadcast a local SDR video, including audio
   dhamri start --source test           Broadcast the moving synthetic test pattern
+  dhamri start --codec hevc --allow-control   Let a viewer request mouse/keyboard control
+  dhamri watch --room majlis           Open the separate desktop viewer window
+  dhamri watch --room majlis --control Sign in first, then request streamer approval
   dhamri devices                      List DirectShow audio capture devices
   dhamri network                      Check HTTPS signaling reachability
   dhamri logout                       Remove this computer's saved login
@@ -32,6 +37,12 @@ Quality options:
   --seconds 20      --ffmpeg "C:\\path\\to\\ffmpeg.exe"
   --allow-upscale   Explicitly permit enlarging a smaller source
   --report result.json   Save a benchmark report; --json prints JSON only
+
+Control is off by default. The streamer must type the displayed APPROVE code
+for each session. Ctrl+Alt+F10 or the visible Stop control button revokes it.
+Viewer Esc, switching windows, disconnects and a 10-minute limit also revoke.
+This version supports a single active laptop display; disconnect other screens.
+The desktop viewer uses an isolated Edge/Chrome app window, not the website.
 
 Network options:
   --server https://media.example.com   --relay https://accounts.example.com
@@ -146,7 +157,7 @@ async function broadcastOrBenchmark(command, options, binary) {
   const config = settings(options, command);
   const log = options.json ? () => {} : console.log;
   const abort = abortable();
-  let proxy, bridge, bridgeError;
+  let proxy, bridge, bridgeError, controlHost;
   try {
     let session;
     if (command === 'start') {
@@ -177,6 +188,7 @@ async function broadcastOrBenchmark(command, options, binary) {
       log(`Starting ${config.source === 'desktop' ? `capture of entire monitor ${config.monitor}` : config.source}. Ctrl+C stops it.`);
       log('Audio: ' + (config.audio ? config.audio : config.source === 'file' ? 'from video file, if present' : 'OFF (use --audio to select a capture device)'));
       log('Native WHIP uses UDP and a fixed bitrate; it does not adapt to congestion. Lower --bitrate if the viewer freezes or drops frames.');
+      if (options['allow-control']) controlHost = await startControlHost({ session, info, signal: abort.signal, log });
     } else log(`Running ${config.seconds}s locally. No media will be uploaded.`);
 
     const samples = [];
@@ -207,7 +219,7 @@ async function broadcastOrBenchmark(command, options, binary) {
     if (result.timedOut) throw new Error('Encoding timed out. The process was stopped.');
     if (result.code !== 0 && !result.cancelled) throw new Error(`${failureDetail(result)} Check UDP reachability, GPU driver, audio device, and whether another broadcast is using the channel.`);
     if (command === 'start') log('Broadcast stopped.');
-  } finally { await bridge?.close(); await proxy?.close(); abort.dispose(); }
+  } finally { controlHost?.close(); await bridge?.close(); await proxy?.close(); abort.dispose(); }
 }
 
 async function doctor(options, binary) {
@@ -254,6 +266,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (process.platform !== 'win32') throw new Error('The native companion currently supports Windows 10/11.');
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required.');
   const binary = options.ffmpeg || 'ffmpeg';
+  if (command === 'watch') {
+    const config = settings(options, 'watch');
+    const session = options.control ? await loadSession(options) : undefined;
+    if (session) { config.server = session.server; config.relay = session.relay; }
+    return launchViewer({ config, session });
+  }
   if (command === 'doctor') return doctor(options, binary);
   if (command === 'benchmark' || command === 'start') return broadcastOrBenchmark(command, options, binary);
   if (command === 'network') return network(options);

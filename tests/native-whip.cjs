@@ -14,9 +14,11 @@ async function main() {
   const { run } = await import('../tools/dhamri/process.mjs');
   const { startHevcBridge } = await import('../tools/dhamri/bridge.mjs');
   const { saveSession } = await import('../tools/dhamri/auth.mjs');
+  const { createViewer } = await import('../tools/dhamri/viewer.mjs');
   const codec = process.env.DHAMRI_CODEC || 'h264';
   const audioTest = process.env.DHAMRI_AUDIO_TEST === '1';
   const cliTest = process.env.DHAMRI_CLI_TEST === '1';
+  const desktopViewerTest = process.env.DHAMRI_DESKTOP_VIEWER === '1';
   if (!process.env.DHAMRI_MEDIAMTX) throw new Error('Set DHAMRI_MEDIAMTX to a local MediaMTX executable.');
   const directory = await mkdtemp(join(tmpdir(), 'dhamri-whip-'));
   const configPath = join(directory, 'mediamtx.yml');
@@ -42,7 +44,7 @@ paths:
   server.stderr.on('data', b => { serverLog = (serverLog + b).slice(-4000); });
   const pageServer = createServer((_req, res) => res.setHeader('Content-Type', 'text/html').end('<video autoplay muted playsinline style="width:640px;height:360px"></video>'));
   await new Promise(resolve => pageServer.listen(0, '127.0.0.1', resolve));
-  let browser, proxy, publisher, bridge, authServer;
+  let browser, proxy, publisher, bridge, authServer, viewer;
   const previousAppData = process.env.LOCALAPPDATA;
   const controller = new AbortController();
   try {
@@ -90,11 +92,28 @@ paths:
     assert.ok(ready, 'publisher was not ready on the media server within 15 seconds');
     browser = await chromium.launch({ headless: true, executablePath: process.env.MAJLIS_CHROME, args: ['--autoplay-policy=no-user-gesture-required'] });
     const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${pageServer.address().port}`);
-    const measurements = await page.evaluate(async (audioTest) => {
+    page.on('pageerror', error => console.error('Viewer script error:', error.message));
+    page.on('console', message => { if (message.type() === 'error') console.error('Viewer console:', message.text()); });
+    if (desktopViewerTest) {
+      viewer = await createViewer({ config: { room: 'native-test', server: 'http://127.0.0.1:18889' } });
+      await page.addInitScript(() => {
+        const Peer = window.RTCPeerConnection;
+        window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.testPeer = this; } };
+      });
+    }
+    await page.goto(viewer?.url || `http://127.0.0.1:${pageServer.address().port}`);
+    if (desktopViewerTest) {
+      try { await page.waitForFunction(() => window.testPeer?.connectionState === 'connected' && document.querySelector('video').videoWidth > 0, null, { timeout: 20000 }); }
+      catch (error) {
+        console.error('Viewer playback state:', await page.evaluate(async () => ({ status: document.querySelector('#video-status').textContent, connection: window.testPeer?.connectionState, videoWidth: document.querySelector('video').videoWidth, stats: window.testPeer ? [...(await window.testPeer.getStats()).values()].filter(s => s.type === 'inbound-rtp' || s.type === 'codec') : [] })));
+        throw error;
+      }
+    }
+    const measurements = await page.evaluate(async ({ audioTest, desktopViewerTest }) => {
       const video = document.querySelector('video');
-      const pc = new RTCPeerConnection();
+      const pc = desktopViewerTest ? window.testPeer : new RTCPeerConnection();
       window.testPeer = pc;
+      if (!desktopViewerTest) {
       pc.addTransceiver('video', { direction: 'recvonly' });
       if (audioTest) pc.addTransceiver('audio', { direction: 'recvonly' });
       const stream = new MediaStream();
@@ -110,6 +129,7 @@ paths:
       if (response.status !== 201) throw new Error(`WHEP HTTP ${response.status}`);
       window.whepResource = new URL(response.headers.get('location'), 'http://127.0.0.1:18889/native-test/whep').href;
       await pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
+      }
       const rows = [];
       for (let i = 0; i < 16; i++) {
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -118,10 +138,9 @@ paths:
         const audio = [...stats.values()].find(s => s.type === 'inbound-rtp' && s.kind === 'audio');
         if (inbound) rows.push({ at: performance.now(), width: inbound.frameWidth, height: inbound.frameHeight, decoded: inbound.framesDecoded, dropped: inbound.framesDropped, fps: inbound.framesPerSecond, codec: stats.get(inbound.codecId)?.mimeType, rendered: video.getVideoPlaybackQuality().totalVideoFrames, freezes: inbound.freezeCount, audioSamples: audio?.totalSamplesReceived || 0 });
       }
-      await fetch(window.whepResource, { method: 'DELETE' }).catch(() => {});
-      pc.close();
+      if (!desktopViewerTest) { await fetch(window.whepResource, { method: 'DELETE' }).catch(() => {}); pc.close(); }
       return rows;
-    }, audioTest);
+    }, { audioTest, desktopViewerTest });
     const warm = measurements.slice(5);
     assert.ok(warm.length >= 8, 'not enough decoded samples');
     assert.ok(warm.every(s => s.width === 2560 && s.height === 1440), 'decoded dimensions must remain 2560x1440');
@@ -130,7 +149,11 @@ paths:
     const decodedFps = (last.decoded - first.decoded) * 1000 / (last.at - first.at);
     assert.ok(last.rendered > first.rendered, 'video element must actually render');
     if (audioTest) assert.ok(last.audioSamples > first.audioSamples, 'Opus audio must be decoded');
-    console.log(JSON.stringify({ decodedFps: Math.round(decodedFps * 10) / 10, width: last.width, height: last.height, codec: last.codec, framesDropped: last.dropped, freezes: last.freezes, minimumReportedFps: Math.min(...warm.map(s => s.fps || 0)), audioSamples: last.audioSamples, scope: 'Local synthetic native WHIP -> MediaMTX -> headless Chrome. Not an internet or 8 GB laptop result.' }, null, 2));
+    console.log(JSON.stringify({ decodedFps: Math.round(decodedFps * 10) / 10, width: last.width, height: last.height, codec: last.codec, framesDropped: last.dropped, freezes: last.freezes, minimumReportedFps: Math.min(...warm.map(s => s.fps || 0)), audioSamples: last.audioSamples, viewer: desktopViewerTest ? 'Dhamri desktop viewer UI' : 'minimal test receiver', scope: 'Local synthetic native WHIP -> MediaMTX -> headless Chrome. Not an internet or 8 GB laptop result.' }, null, 2));
+    if (viewer) {
+      await page.goto('about:blank');
+      await viewer.close(); viewer = null;
+    }
     // The CLI owns an FFmpeg child; let its --seconds deadline perform normal
     // cleanup instead of killing the parent process and orphaning the encoder.
     if (!cliTest) controller.abort();
@@ -149,6 +172,7 @@ paths:
     if (serverLog) console.log(serverLog);
     await proxy?.close();
     await browser?.close();
+    await viewer?.close();
     pageServer.closeAllConnections();
     await new Promise(resolve => pageServer.close(resolve));
     if (authServer) { authServer.closeAllConnections(); await new Promise(resolve => authServer.close(resolve)); }

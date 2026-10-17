@@ -2,9 +2,9 @@ name: Native broadcaster
 on:
   push:
     branches: [main, 'codex/**']
-    paths: ['tools/dhamri/**', 'tests/**', 'src/stream/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
+    paths: ['tools/dhamri/**', 'tests/**', 'src/stream/**', 'server/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
   pull_request:
-    paths: ['tools/dhamri/**', 'tests/**', 'src/stream/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
+    paths: ['tools/dhamri/**', 'tests/**', 'src/stream/**', 'server/**', 'dhamri.cmd', 'setup-dhamri.cmd', '.github/workflows/native-cli.yml']
   workflow_dispatch:
 
 permissions:
@@ -24,7 +24,9 @@ jobs:
           go-version-file: tools/dhamri/native/go.mod
           cache-dependency-path: tools/dhamri/native/go.sum
       - run: npm ci
+      - run: npm ci --prefix server
       - run: npm test
+      - run: node tests/control-relay.cjs
       - run: npm run lint
       - run: npm run build
       - name: Check native helper
@@ -35,11 +37,13 @@ jobs:
           go vet ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -trimpath '-ldflags=-s -w' -o ../bin/dhamri-whip.exe .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -trimpath '-ldflags=-s -w' -o ../bin/dhamri-input.exe ./cmd/input
       - name: Package Windows tool
-        run: node tools/dhamri/package.mjs 0.1.0-rc3
+        run: node tools/dhamri/package.mjs 0.2.0-rc1
       - uses: actions/upload-artifact@v4
         with:
           name: dhamri-windows
           path: |
-            artifacts/dhamri-windows-0.1.0-rc3.zip
-            artifacts/dhamri-windows-0.1.0-rc3.zip.sha256
+            artifacts/dhamri-windows-0.2.0-rc1.zip
+            artifacts/dhamri-windows-0.2.0-rc1.zip.sha256

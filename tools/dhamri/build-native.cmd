@@ -7,6 +7,9 @@ if errorlevel 1 (
 )
 pushd "%~dp0native"
 go build -trimpath -ldflags="-s -w" -o "..\bin\dhamri-whip.exe" .
+if errorlevel 1 goto finished
+go build -trimpath -ldflags="-s -w" -o "..\bin\dhamri-input.exe" ./cmd/input
+:finished
 set "build_result=%errorlevel%"
 popd
 exit /b %build_result%

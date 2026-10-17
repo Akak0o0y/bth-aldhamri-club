@@ -1,4 +1,4 @@
-# Dhamri CMD broadcaster — H.264 and HEVC
+# Dhamri CMD broadcaster and desktop viewer — H.264 and HEVC
 
 **A Windows command-line companion for the existing [Dhamri website](https://dhamri.vercel.app/).** It captures/encodes locally, publishes over encrypted WebRTC, and lets viewers keep watching in their browsers. No OBS is required. This is an optional native publisher; browser broadcasting remains available.
 
@@ -21,7 +21,52 @@ dhamri start --codec hevc
 
 سجّل الدخول بنفس حساب المذيع في الموقع. يعرض البرنامج رابط قناتك للمشاهدين. الأمر الأخير يبث **الشاشة كاملة**؛ اضغط `Ctrl+C` للإيقاف. شغّل الاختبار على اللابتوب المطلوب نفسه. نجاح الاختبار المحلي لا يثبت سرعة الإنترنت أو وصول 60 إطاراً للمشاهد.
 
-The release ZIP includes the small HEVC transport executable. GitHub's automatically generated **Source code ZIP** does not include compiled binaries: source users must run `tools\dhamri\build-native.cmd` with Go installed to use HEVC. H.264 uses FFmpeg's WHIP muxer directly.
+The release ZIP includes the HEVC transport and Windows input helpers. GitHub's automatically generated **Source code ZIP** does not include compiled binaries: source users must run `tools\dhamri\build-native.cmd` with Go installed to use HEVC or remote control. H.264 uses FFmpeg's WHIP muxer directly.
+
+## Desktop viewer and remote control / التحكم عن بعد
+
+`dhamri watch` opens a separate desktop app window using installed Microsoft Edge or Google Chrome and a temporary, isolated browser profile. Launch it from CMD; the Dhamri website is not needed during viewing or control. It uses the browser engine for WebRTC decoding, so HEVC still requires a compatible GPU, driver and browser. Node.js is required on both laptops; FFmpeg is needed only on the streaming laptop. Windows x64 is required for the native helpers.
+
+On the **streaming laptop**, sign in with its own Dhamri account and opt into control requests:
+
+```bat
+dhamri login
+dhamri start --codec hevc --allow-control
+```
+
+For a 1920×1080 laptop screen, specify its actual dimensions:
+
+```bat
+dhamri start --codec hevc --size 1920x1080 --allow-control
+```
+
+Use the default 2560×1440 target with a native 1440p screen. `--allow-upscale` can enlarge a smaller screen but adds no detail. This first control release requires **one active display**, monitor 0, desktop capture and an interactive terminal. Disconnect external displays before starting it. File and test-pattern broadcasts do not accept control.
+
+On the **viewer's laptop**, sign in with the viewer's own account, then open the streamer's channel:
+
+```bat
+dhamri login
+dhamri watch --room THEIR_CHANNEL --control
+```
+
+Replace `THEIR_CHANNEL` with the channel name from the streamer's watch link, for example `majlis`. The room is not necessarily their account name. The streamer can create an account invitation from the website if the viewer does not yet have an account. To watch without requesting control, no account is needed:
+
+```bat
+dhamri watch --room THEIR_CHANNEL
+```
+
+1. Once video appears, the viewer clicks **Request control**.
+2. The streamer's terminal displays the viewer's signed-in account name and a fresh approval code. The streamer types the exact displayed command, such as `APPROVE A1B2C3`, and presses Enter within 30 seconds. `DENY` declines the request.
+3. A visible **REMOTE CONTROL ACTIVE** window appears on the streaming laptop. The viewer clicks inside the video and can move the mouse, click, drag, scroll and type. Keys follow the streaming laptop's keyboard layout.
+4. The streamer can revoke immediately with **Ctrl+Alt+F10**, the **Stop control** window button, or `STOP` + Enter in CMD. The viewer can press **Esc**, click **Stop control**, switch windows, or close the viewer. `Ctrl+C` in the broadcasting terminal stops the broadcast and control together.
+
+Each grant lasts at most ten minutes, permits one controller, and requires fresh approval to start again. Disconnection and missing heartbeats revoke control and release held keys/buttons. A still desktop remains controllable even when capture emits no new frames. A stopped relay connection requires reopening the viewer or restarting the broadcaster before requesting again.
+
+Control covers the Windows desktop using ordinary mouse/keyboard input. It does not provide clipboard synchronization, file transfer, unattended access, a remote command API, UAC secure-desktop control or input into elevated applications. Windows/browser-reserved shortcuts may stay local; Escape is reserved for stopping control. Run without administrator privileges. Streaming performance and the media codec are unchanged by enabling control.
+
+Both sides authenticate over the dedicated `/control` WebSocket endpoint. Account tokens stay in the CLI, never in the viewer page or process arguments. The relay verifies channel ownership and the approved viewer, limits input rate, and rejects stale sessions. The local viewer listens only on `127.0.0.1`, with a new private URL for each launch and strict Origin/Host checks. Input commands are relayed over WSS, so their delay depends on the realtime server route as well as the video route; this is not a measured gaming-latency guarantee.
+
+**Server rollout:** remote control requires this version of `server/realtime.js` **and `server/control.js`** on the realtime service. Its health endpoint reports `controlProtocol: 1` when supported. Deploy from the repository's `server/` directory using its Dockerfile; retain the existing account volume, secrets and origins. No database migration or media-server update is required. Downloading the new ZIP alone does not upgrade an older relay. Ordinary broadcasting and viewing can continue with an older relay; `--allow-control` reports an error until the relay is updated.
 
 ## Quality and source selection
 
@@ -102,6 +147,7 @@ An ephemeral loopback signaling proxy attaches the token to verified HTTPS reque
 
 ```bat
 npm test
+node tests/control-relay.cjs
 npm run lint
 npm run build
 tools\dhamri\build-native.cmd
@@ -112,5 +158,9 @@ go test ./...
 `tests/native-whip.cjs` is an optional real-media test with a separate loopback-only MediaMTX process, a native publisher and headless Chrome viewer. Set `DHAMRI_MEDIAMTX` to a MediaMTX executable and `MAJLIS_PLAYWRIGHT` to an installed Playwright package. `MAJLIS_CHROME` can specify Chrome; `DHAMRI_CODEC=hevc` selects HEVC. It verifies negotiated codec, decoded 1440p frames, rendered video and session cleanup. Its reported playback FPS is evidence, not an unconditional 60 fps assertion.
 
 Set `DHAMRI_AUDIO_TEST=1` to verify Opus audio too. `DHAMRI_CLI_TEST=1` exercises saved login and file playback through the actual CLI against a separate local account stub; `DHAMRI_CLI_ENTRY` can point to an extracted release's `tools/dhamri/cli.mjs`. Test tokens and sessions stay in a temporary directory. Set `DHAMRI_FFMPEG_TEST=ffmpeg` when running `npm test` to include the real 30/60/120 fps regression check; without FFmpeg that one test is skipped.
+
+Set `DHAMRI_DESKTOP_VIEWER=1` on the native media test to exercise the actual desktop viewer's WHEP player. `tests/desktop-viewer.cjs` uses Playwright and a local synthetic WebRTC source to check approval, mouse/keyboard/scroll, static-screen input, Escape, blur and transport failure with a recording input helper. `tests/control-relay.cjs` starts the actual realtime server with a temporary account store and tests cross-account approval, a session surviving the chat heartbeat, and password-change revocation; install its dependency with `npm ci --prefix server` first. Neither test accesses production accounts.
+
+Go tests normally use a recording input sink. On an interactive Windows desktop, `set DHAMRI_WINDOWS_INPUT_TEST=1` before `go test -v ./cmd/input` additionally creates its own text window, verifies that it has focus, injects one letter and restores the prior focus. This explicitly enabled test exercises real Windows input only in its own window.
 
 References: [FFmpeg WHIP](https://ffmpeg.org/ffmpeg-formats.html#whip), [desktop capture](https://ffmpeg.org/ffmpeg-filters.html#ddagrab), [MediaMTX WebRTC compatibility](https://mediamtx.org/docs/features/webrtc-specific-features), [Pion WebRTC](https://github.com/pion/webrtc), [Tailscale connection types](https://tailscale.com/docs/reference/connection-types).

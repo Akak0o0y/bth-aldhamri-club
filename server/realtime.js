@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
+import { createControlHub } from './control.js';
 import {
   changePassword,
   checkPassword,
@@ -345,7 +346,7 @@ async function route(req, res) {
   // Health check for the host platform; also handy to eyeball load.
   let clients = 0;
   for (const room of rooms.values()) clients += room.clients.size;
-  reply(res, path === '/' ? 200 : 404, { ok: path === '/', rooms: rooms.size, clients });
+  reply(res, path === '/' ? 200 : 404, { ok: path === '/', rooms: rooms.size, clients, controlProtocol: 1 });
 }
 
 const server = createServer((req, res) => {
@@ -356,10 +357,12 @@ const wss = new WebSocketServer({
   server,
   maxPayload: 4096,
   perMessageDeflate: false,
-  verifyClient: ({ origin }) => !ORIGINS.length || ORIGINS.includes('*') || ORIGINS.includes(origin),
+  verifyClient: ({ origin, req }) => (req.url === '/control' && !origin) || !ORIGINS.length || ORIGINS.includes('*') || ORIGINS.includes(origin),
 });
 
-wss.on('connection', (ws) => {
+const controlHub = createControlHub({ authenticate: readToken, roomOf });
+wss.on('connection', (ws, req) => {
+  if (req.url === '/control') { ws.remoteControl = true; return controlHub.attach(ws); }
   ws.alive = true;
   ws.tokens = 10;
   ws.refill = Date.now();
@@ -389,6 +392,8 @@ wss.on('connection', (ws) => {
 // ones whose network vanished.
 setInterval(() => {
   for (const ws of wss.clients) {
+    // Control sockets have their own shorter application heartbeat/watchdog.
+    if (ws.remoteControl) continue;
     if (!ws.alive) {
       ws.terminate();
       continue;

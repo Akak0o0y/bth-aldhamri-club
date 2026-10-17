@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { run } from './process.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const version = process.argv[2] || '0.1.0';
+const version = process.argv[2] || '0.2.0-rc1';
 if (!/^\d+\.\d+\.\d+(?:-[a-z0-9]+)?$/.test(version)) throw new Error('Use a semantic release version.');
 const go = process.argv[3] || 'go';
 const destination = join(root, 'artifacts', `dhamri-windows-${version}`);
@@ -17,8 +17,11 @@ const files = ['dhamri.cmd', 'setup-dhamri.cmd'];
 for (const file of await readdir(join(root, 'tools', 'dhamri'))) {
   if (file.endsWith('.mjs') || file.endsWith('.ps1') || file === 'build-native.cmd') files.push(`tools/dhamri/${file}`);
 }
-for (const file of ['main.go', 'main_test.go', 'go.mod', 'go.sum']) files.push(`tools/dhamri/native/${file}`);
-files.push('tools/dhamri/bin/dhamri-whip.exe');
+for (const file of await walk(join(root, 'tools/dhamri/native'))) {
+  if (file.endsWith('.go') || file === 'go.mod' || file === 'go.sum') files.push(`tools/dhamri/native/${file}`);
+}
+for (const file of ['index.html', 'viewer.mjs', 'viewer.css', 'geometry.mjs']) files.push(`tools/dhamri/viewer/${file}`);
+files.push('tools/dhamri/bin/dhamri-whip.exe', 'tools/dhamri/bin/dhamri-input.exe');
 for (const file of files) {
   const target = join(destination, file);
   await mkdir(dirname(target), { recursive: true });
@@ -32,7 +35,7 @@ await copyFile(join(root, 'docs', 'native-broadcaster.md'), join(destination, 'R
 const native = join(root, 'tools', 'dhamri', 'native');
 // Enumerate modules that contribute compiled packages. The full module graph
 // can include unused test dependencies whose source directories do not exist.
-const modules = await run(go, ['-C', native, 'list', '-deps', '-f', '{{with .Module}}{{.Path}}|{{.Version}}|{{.Dir}}{{end}}', '.'], { timeout: 60000 });
+const modules = await run(go, ['-C', native, 'list', '-deps', '-f', '{{with .Module}}{{.Path}}|{{.Version}}|{{.Dir}}{{end}}', './...'], { timeout: 60000 });
 if (modules.code !== 0) throw new Error('Could not enumerate native dependency licenses.');
 const goroot = await run(go, ['env', 'GOROOT']);
 const sections = [`Go runtime\nhttps://go.dev/\n${await readFile(join(goroot.stdout.trim(), 'LICENSE'), 'utf8')}`];

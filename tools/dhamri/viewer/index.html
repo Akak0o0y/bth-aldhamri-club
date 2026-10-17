@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dhamri Viewer</title><link rel="stylesheet" href="viewer.css"></head>
+<body><header><div><strong>Dhamri Viewer</strong><span id="room"></span></div><nav><button id="sound">Enable sound</button><button id="fullscreen">Full screen</button><button id="request" disabled>Request control</button><button id="stop" hidden>Stop control (Esc)</button></nav></header>
+<main><video id="video" autoplay muted playsinline tabindex="0" aria-label="Live stream and remote control surface"></video><p id="video-status" role="status">Connecting to stream…</p></main>
+<footer><span id="control-status" role="status">View only</span><span id="stats"></span></footer>
+<script type="module" src="viewer.mjs"></script></body></html>

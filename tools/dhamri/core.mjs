@@ -10,9 +10,9 @@ export function hevcLevel(config) {
   const pixels = config.width * config.height;
   return pixels * config.fps <= 267386880 ? 150 : pixels * config.fps <= 534773760 ? 153 : 156;
 }
-const VALUES = new Set(['size', 'fps', 'bitrate', 'codec', 'encoder', 'source', 'file', 'monitor', 'audio', 'seconds', 'ffmpeg', 'server', 'relay', 'user', 'tailscale-peer', 'report']);
-const FLAGS = new Set(['help', 'json', 'allow-upscale']);
-const COMMANDS = new Set(['help', 'doctor', 'devices', 'benchmark', 'login', 'logout', 'start', 'network']);
+const VALUES = new Set(['size', 'fps', 'bitrate', 'codec', 'encoder', 'source', 'file', 'monitor', 'audio', 'seconds', 'ffmpeg', 'server', 'relay', 'user', 'tailscale-peer', 'report', 'room']);
+const FLAGS = new Set(['help', 'json', 'allow-upscale', 'allow-control', 'control']);
+const COMMANDS = new Set(['help', 'doctor', 'devices', 'benchmark', 'login', 'logout', 'start', 'network', 'watch']);
 
 export function parseArgs(argv) {
   const args = [...argv];
@@ -74,8 +74,12 @@ export function settings(options, command = 'start') {
   const bitrate = integer(options.bitrate || defaultBitrate, 500, 50000, 'Bitrate (kbps)');
   const seconds = integer(options.seconds || (command === 'benchmark' ? 20 : 0), command === 'benchmark' ? 10 : 0, 3600, 'Seconds');
   if (options.audio && source === 'file') throw new Error('File streams use the audio in the file; omit --audio.');
+  if (options['allow-control'] && (command !== 'start' || source !== 'desktop' || Number(options.monitor || 0) !== 0 || options.json)) throw new Error('--allow-control is only for interactive desktop broadcasting on monitor 0.');
+  if (options.control && command !== 'watch') throw new Error('--control is only for dhamri watch.');
+  const room = options.room || 'majlis';
+  if (!/^[a-z0-9_-]{1,64}$/i.test(room)) throw new Error('--room must be the channel name from the watch link.');
   return {
-    width, height, size, fps, bitrate, codec, source, encoder, seconds,
+    width, height, size, fps, bitrate, codec, source, encoder, seconds, room,
     monitor: integer(options.monitor || 0, 0, 31, 'Monitor index'),
     file: options.file, audio: options.audio || null,
     allowUpscale: Boolean(options['allow-upscale']),
