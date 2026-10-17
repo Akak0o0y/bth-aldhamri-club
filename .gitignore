@@ -31,3 +31,7 @@ dist-ssr
 
 # Local streamer accounts (server/accounts.js); production keeps them on a Railway volume
 server/data/
+
+# Native companion build/release artifacts; logins live in LOCALAPPDATA, not here.
+tools/dhamri/bin/
+artifacts/

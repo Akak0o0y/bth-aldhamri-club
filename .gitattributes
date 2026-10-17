@@ -1,3 +1,7 @@
 # Container scripts run under Linux /bin/sh; CRLF would break them.
 *.sh text eol=lf
 Dockerfile text eol=lf
+*.cmd text eol=crlf
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
