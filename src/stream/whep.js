@@ -1,23 +1,8 @@
-// WHEP viewer. Zero-buffer playout: jitterBufferTarget / playoutDelayHint = 0
-// hands every decoded frame to the screen immediately (same trick as
-// binbat/live777's player-core). Reconnects on its own and stays quiet while
-// the tab is hidden, so an idle "waiting for host" screen costs nothing.
+// WHEP viewer with a small live buffer to absorb packet arrival variation.
 import { authHeaders, linkToIceServers, parseOffer, sdpFragment, tuneViewerOffer } from './sdp';
+import { applyLatencyHints } from './latency';
 
 const FALLBACK_ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
-
-export function applyLatencyHints(receiver, lowLatency) {
-  try {
-    if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = lowLatency ? 0 : null;
-  } catch {
-    // Older engines reject null; ignore.
-  }
-  try {
-    if ('playoutDelayHint' in receiver) receiver.playoutDelayHint = lowLatency ? 0 : null;
-  } catch {
-    // Legacy Chrome-only hint.
-  }
-}
 
 export class WhepPlayer {
   #url;

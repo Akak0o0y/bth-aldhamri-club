@@ -26,22 +26,22 @@ function routeOf(report, pair) {
 
 const codecName = (report, id) => report.get(id)?.mimeType?.split('/')[1]?.toUpperCase() ?? null;
 
-export function createSampler(pc, role) {
+export function createSampler(pc, role, clock = () => performance.now()) {
   let prev = new Map();
-  let prevTime = 0;
+  let prevTime = null;
 
   const delta = (id, key, cur) => {
     const before = prev.get(id)?.[key];
-    return typeof before === 'number' && typeof cur === 'number' ? cur - before : null;
+    return Number.isFinite(before) && Number.isFinite(cur) && cur >= before ? cur - before : null;
   };
 
   return async function sample() {
     const report = await pc.getStats();
-    const now = performance.now();
-    const seconds = prevTime ? (now - prevTime) / 1000 : null;
+    const now = clock();
+    const seconds = prevTime !== null && now > prevTime ? (now - prevTime) / 1000 : null;
     const pair = selectedPair(report);
     const rttMs = num(pair?.currentRoundTripTime) !== null ? pair.currentRoundTripTime * 1000 : null;
-    const out = { role, rttMs: round(rttMs), ...routeOf(report, pair), at: Date.now() };
+    const out = { role, rttMs: round(rttMs), ...routeOf(report, pair), at: Date.now(), lossPct: null, captureFps: null, captureWidth: null, captureHeight: null };
     let totalBytes = 0;
     let haveBytes = false;
     const next = new Map();
@@ -64,9 +64,9 @@ export function createSampler(pc, role) {
         Object.assign(out, {
           width: num(s.frameWidth),
           height: num(s.frameHeight),
-          fps: round(num(s.framesPerSecond)),
+          fps: round(num(s.framesPerSecond) ?? (seconds && dFrames !== null ? dFrames / seconds : null), 1),
           codec: codecName(report, s.codecId),
-          lossPct: dLost !== null && dRecv !== null && dLost + dRecv > 0 ? round((100 * dLost) / (dLost + dRecv), 2) : 0,
+          lossPct: dLost !== null && dRecv !== null && dLost + dRecv > 0 ? round((100 * dLost) / (dLost + dRecv), 2) : null,
           jitterMs: round(num(s.jitter) !== null ? s.jitter * 1000 : null),
           bufferMs: dBuf !== null && dEmit > 0 ? round((1000 * dBuf) / dEmit) : null,
           decodeMs: dDec !== null && dFrames > 0 ? round((1000 * dDec) / dFrames, 1) : null,
@@ -86,12 +86,21 @@ export function createSampler(pc, role) {
         if (s.kind !== 'video') return;
         const dEnc = delta(s.id, 'totalEncodeTime', s.totalEncodeTime);
         const dFrames = delta(s.id, 'framesEncoded', s.framesEncoded);
+        const dPackets = delta(s.id, 'packetsSent', s.packetsSent);
+        const dSendDelay = delta(s.id, 'totalPacketSendDelay', s.totalPacketSendDelay);
+        const source = report.get(s.mediaSourceId);
+        if (source) next.set(source.id, source);
+        const dCaptured = source ? delta(source.id, 'frames', source.frames) : null;
         Object.assign(out, {
           width: num(s.frameWidth),
           height: num(s.frameHeight),
-          fps: round(num(s.framesPerSecond)),
+          fps: round(num(s.framesPerSecond) ?? (seconds && dFrames !== null ? dFrames / seconds : null), 1),
+          captureFps: round(num(source?.framesPerSecond) ?? (seconds && dCaptured !== null ? dCaptured / seconds : null), 1),
+          captureWidth: num(source?.width),
+          captureHeight: num(source?.height),
           codec: codecName(report, s.codecId),
           encodeMs: dEnc !== null && dFrames > 0 ? round((1000 * dEnc) / dFrames, 1) : null,
+          sendDelayMs: dSendDelay !== null && dPackets > 0 ? round((1000 * dSendDelay) / dPackets, 1) : null,
           targetKbps: num(s.targetBitrate) !== null ? Math.round(s.targetBitrate / 1000) : null,
           limitation: s.qualityLimitationReason ?? null,
           hw: typeof s.powerEfficientEncoder === 'boolean' ? s.powerEfficientEncoder : null,
@@ -105,16 +114,13 @@ export function createSampler(pc, role) {
 
     out.kbps = haveBytes && seconds ? Math.round((totalBytes * 8) / seconds / 1000) : null;
 
-    // Estimated glass-to-glass delay. A viewer can't see the broadcaster's leg,
-    // so it assumes that leg mirrors its own (same server) plus ~10 ms to
-    // encode — measured against real stamped frames this lands within ~30 ms.
-    const half = out.rttMs !== null ? out.rttMs / 2 : 0;
+    // A rough estimate of THIS peer's leg only, not glass-to-glass latency.
+    // End-to-end delay needs a stamped source and clock synchronization.
+    const half = out.rttMs !== null ? out.rttMs / 2 : null;
     if (role === 'viewer') {
-      const frame = out.fps ? 1000 / out.fps / 2 : 8;
-      const hostLeg = half + 10;
-      out.latencyMs = out.rttMs === null && out.bufferMs === null ? null : Math.round(hostLeg + half + (out.bufferMs ?? 0) + (out.decodeMs ?? 0) + frame);
+      out.latencyMs = half === null || out.bufferMs == null || out.decodeMs == null ? null : Math.round(half + out.bufferMs + out.decodeMs);
     } else {
-      out.latencyMs = out.rttMs === null ? null : Math.round(half + (out.encodeMs ?? 0));
+      out.latencyMs = half === null || out.encodeMs == null || out.sendDelayMs == null ? null : Math.round(half + out.encodeMs + out.sendDelayMs);
     }
 
     prev = next;

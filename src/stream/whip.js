@@ -1,8 +1,9 @@
 // WHIP publisher: one encode, sent once to the server (MediaMTX forwards it
 // to every viewer without transcoding). That keeps the broadcaster's CPU and
 // upload flat no matter how many friends join.
-import { preferCodec } from './codecs';
-import { authHeaders, linkToIceServers, parseOffer, sdpFragment, tunePublisherAnswer, tunePublisherOffer } from './sdp';
+import { preferCodec } from './codecs.js';
+import { applyVideoEncoding } from './encoding.js';
+import { authHeaders, linkToIceServers, parseOffer, sdpFragment, tunePublisherAnswer, tunePublisherOffer } from './sdp.js';
 
 const FALLBACK_ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
 
@@ -17,6 +18,7 @@ export class WhipPublisher {
   #stopped = true;
   #videoSender = null;
   #auth;
+  #encodingQueue = Promise.resolve();
 
   // opts: { url, token? | user?+pass?, stream, codecId, videoKbps, fps, contentHint, music, audioKbps, onStatus }
   constructor(opts) {
@@ -38,29 +40,20 @@ export class WhipPublisher {
     this.#teardown();
   }
 
-  // Live re-tune without renegotiation (used by the CPU guard and the
-  // bitrate slider while on air).
-  async updateEncoding({ videoKbps, fps, scaleDown }) {
-    if (videoKbps) this.#opts.videoKbps = videoKbps;
-    if (fps) this.#opts.fps = fps;
-    const sender = this.#videoSender;
-    if (!sender) return;
-    const params = sender.getParameters();
-    if (!params.encodings?.length) params.encodings = [{}];
-    const enc = params.encodings[0];
-    enc.maxBitrate = this.#opts.videoKbps * 1000;
-    enc.maxFramerate = this.#opts.fps;
-    if (scaleDown) enc.scaleResolutionDownBy = scaleDown;
-    // What stays fixed when the CPU or network can't keep up is the
-    // streamer's choice: games and films keep the frame rate (resolution
-    // steps down while overloaded), screens and text keep the resolution.
-    params.degradationPreference = this.#opts.contentHint === 'motion' ? 'maintain-framerate' : 'maintain-resolution';
-    try {
-      await sender.setParameters(params);
-    } catch {
-      delete params.degradationPreference;
-      await sender.setParameters(params).catch(() => {});
-    }
+  // Serialize transactions: slider changes and congestion recovery may overlap.
+  updateEncoding(change) {
+    const token = this.#token;
+    const update = async () => {
+      const sender = this.#videoSender;
+      if (!sender || token !== this.#token || this.#stopped) return false;
+      const next = { ...this.#opts, ...change };
+      await applyVideoEncoding(sender, next);
+      if (sender !== this.#videoSender || token !== this.#token) return false;
+      this.#opts = next;
+      return true;
+    };
+    this.#encodingQueue = this.#encodingQueue.catch(() => {}).then(update);
+    return this.#encodingQueue;
   }
 
   #status(status, message = '') {
@@ -180,7 +173,9 @@ export class WhipPublisher {
       if (!live()) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: tunePublisherAnswer(answer, o) });
       if (this.#pending.length) this.#sendCandidates(this.#pending.splice(0));
-      await this.updateEncoding({});
+      await this.updateEncoding({}).catch((err) => {
+        if (live()) this.#opts.onEncodingError?.(err);
+      });
     } catch (err) {
       if (live()) this.#retry('error', err.message || String(err), 4000);
     }

@@ -9,7 +9,7 @@ import VoiceLounge from './components/VoiceLounge';
 import { authStore, checkSession, inviteCode } from './auth/session';
 import { useStore } from './lib/store';
 import { soundFX } from './services/soundEffects';
-import { startViewing, stopViewing } from './stream/controller';
+import { startViewing, stopViewing, streamStore } from './stream/controller';
 import { prefsStore } from './ui/prefs';
 
 // Dialogs are split out of the first load and prefetched when idle,
@@ -47,6 +47,7 @@ function ripple(e) {
 
 export default function App() {
   const eco = useStore(prefsStore, (s) => s.eco);
+  const broadcasting = useStore(streamStore, (s) => s.role === 'host');
   const theater = useStore(prefsStore, (s) => s.theater);
   // A streamer invite (?invite=CODE) opens straight onto the sign-up form; any
   // other visitor without a name yet is asked for one for the chat and mic,
@@ -79,8 +80,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.classList.toggle('eco', eco);
-  }, [eco]);
+    document.documentElement.classList.toggle('eco', eco || broadcasting);
+  }, [eco, broadcasting]);
 
   return (
     <div className={`app ${theater ? 'is-theater' : ''}`}>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   Check,
@@ -20,6 +20,8 @@ import { authStore } from '../auth/session';
 import { useStore } from '../lib/store';
 import { pickAutoCodec, probeEncoders, VIDEO_CODECS } from '../stream/codecs';
 import { inviteLink, whipUrl } from '../stream/config';
+import { checkDevice } from '../stream/deviceCheck';
+import { assessQuality } from '../stream/quality';
 import {
   goLive,
   PRESETS,
@@ -27,10 +29,12 @@ import {
   setLiveBitrate,
   setPreviewHidden,
   stopLive,
+  stopViewing,
+  startViewing,
   streamStore,
 } from '../stream/controller';
 import { soundFX } from '../services/soundEffects';
-import { LOW_END, toast } from '../ui/prefs';
+import { toast } from '../ui/prefs';
 import Dialog from './Dialog';
 import StatsPanel from './StatsPanel';
 import { StatusPill } from './Status';
@@ -46,7 +50,7 @@ export default function StudioDialog({ onClose, onOpen }) {
   const status = useStore(streamStore, (s) => s.status);
   const isHost = role === 'host';
   const subtitle = !isHost
-    ? 'ترميز واحد بكرت الشاشة — ويصل للجميع بأقل تأخير'
+    ? 'بث من المتصفح مع قياس الدقة والإطارات الفعلية'
     : status === 'live'
       ? 'أنت على الهواء الآن'
       : 'المعاينة تعمل — بانتظار الاتصال بالسيرفر';
@@ -86,44 +90,78 @@ function SetupPanel({ onClose, onOpen }) {
   const [tab, setTab] = useState('browser');
   const [source, setSource] = useState('screen');
   const [contentHint, setContentHint] = useState('motion');
-  const [presetId, setPresetId] = useState(null);
-  const [fps, setFps] = useState(LOW_END ? 30 : 60);
+  const [presetId, setPresetId] = useState('1440');
+  const [fps, setFps] = useState(60);
   const [codec, setCodec] = useState('auto');
   const [override, setOverride] = useState(null); // { key, kbps } — user-dragged bitrate
-  const [probes, setProbes] = useState(null);
+  const [probeState, setProbeState] = useState(null);
+  const [checkProgress, setCheckProgress] = useState(null);
+  const [checkResult, setCheckResult] = useState(null);
+  const checkRef = useRef(null);
+  const mounted = useRef(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, copy] = useCopy();
 
+  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[1];
+  const probeKey = `${preset.id}|${fps}|${override?.key ?? ''}|${override?.kbps ?? ''}`;
+  const probes = probeState?.key === probeKey ? probeState.probes : null;
   const autoCodec = probes ? pickAutoCodec(probes) : 'h264';
   const codecId = codec === 'auto' ? autoCodec : codec;
   const autoProbe = probes?.find((p) => p.id === autoCodec);
 
-  // What this machine can carry comfortably.
-  const recommended = useMemo(() => {
-    if (!probes) return '1080';
-    if (!autoProbe?.hw) return '720';
-    return (navigator.hardwareConcurrency || 4) >= 8 && !LOW_END ? '1440' : '1080';
-  }, [probes, autoProbe]);
-
-  const preset = PRESETS.find((p) => p.id === (presetId ?? recommended)) ?? PRESETS[2];
-
-  // One hardware probe per dialog open, at a fixed 1080p60 target.
+  // Probe the selected workload, including codec-specific bitrate. No CPU-count
+  // guess and no stale 1080p result shown beside a 1440p/4K selection.
   useEffect(() => {
     let cancelled = false;
-    probeEncoders({ width: 1920, height: 1080, fps: 60, kbps: 7000 }).then((p) => {
-      if (!cancelled) setProbes(p);
-    });
+    const timer = setTimeout(() => {
+      const codecKbps = Object.fromEntries(VIDEO_CODECS.map((c) => [c.id,
+        override?.key === `${preset.id}|${c.id}|${fps}` ? override.kbps : presetKbps(preset, c.id, fps),
+      ]));
+      probeEncoders({ width: preset.width, height: preset.height, fps, codecKbps }).then((p) => {
+        if (!cancelled) setProbeState({ key: probeKey, probes: p });
+      });
+    }, 200);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
+  }, [preset, fps, override, probeKey]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; checkRef.current?.abort(); };
   }, []);
 
   // The suggested bitrate follows the picture until the user drags the slider.
   const bitrateKey = `${preset.id}|${codecId}|${fps}`;
   const bitrate = override?.key === bitrateKey ? override.kbps : presetKbps(preset, codecId, fps);
   const audioKbps = source === 'screen' ? 128 : source === 'camera' ? 64 : 0;
-  const uploadMbps = ((bitrate + audioKbps) * 1.08) / 1000;
+  const uploadMbps = ((bitrate + audioKbps) * 1.5) / 1000;
+  const checking = checkProgress !== null;
+  const selectedProbe = probes?.find((p) => p.id === codecId);
+  const checkKey = `${bitrateKey}|${bitrate}`;
+  const result = checkResult?.key === checkKey ? checkResult.result : null;
+
+  const runCheck = async () => {
+    if (checkRef.current) return;
+    const controller = new AbortController();
+    checkRef.current = controller;
+    setCheckProgress(0);
+    setCheckResult(null);
+    setError('');
+    stopViewing();
+    try {
+      const result = await checkDevice({ preset, fps, codecId, kbps: bitrate, signal: controller.signal, onProgress: setCheckProgress });
+      if (!controller.signal.aborted) setCheckResult({ key: checkKey, result });
+    } catch (err) {
+      if (!controller.signal.aborted) setError(err.message || 'تعذر إكمال فحص الجهاز');
+    } finally {
+      if (mounted.current) setCheckProgress(null);
+      checkRef.current = null;
+      if (streamStore.get().role === 'viewer') startViewing();
+    }
+  };
 
   const start = async () => {
     // Only streamers with an account may publish; send everyone else to log in.
@@ -154,7 +192,7 @@ function SetupPanel({ onClose, onOpen }) {
           <Monitor size={16} />
           من المتصفح
         </button>
-        <button className="seg__opt" role="tab" aria-selected={tab === 'obs'} onClick={() => setTab('obs')}>
+        <button className="seg__opt" role="tab" aria-selected={tab === 'obs'} onClick={() => setTab('obs')} disabled={checking}>
           <Zap size={16} />
           OBS Studio
         </button>
@@ -189,9 +227,8 @@ function SetupPanel({ onClose, onOpen }) {
               </div>
               <p className="hint">
                 {contentHint === 'motion'
-                  ? 'الإطارات ثابتة: إذا ضغط المعالج تنخفض الدقة مؤقتاً بدل أن تتقطع الحركة.'
-                  : 'الدقة ثابتة: إذا ضغط المعالج قد تقل الإطارات بدل أن تنخفض الدقة.'}{' '}
-                مع OBS وكرت الشاشة يبقى الاثنان ثابتين.
+                  ? 'نفضّل سلاسة الحركة؛ قد تنخفض الدقة أو الإطارات إذا لم يكفِ الجهاز أو الاتصال.'
+                  : 'نفضّل التفاصيل؛ قد تنخفض الإطارات عند ضغط الجهاز أو الاتصال.'}
               </p>
             </section>
           )}
@@ -210,14 +247,14 @@ function SetupPanel({ onClose, onOpen }) {
             <div className="presets">
               {PRESETS.map((p) => (
                 <button key={p.id} className="preset" aria-pressed={preset.id === p.id} onClick={() => setPresetId(p.id)}>
-                  {recommended === p.id && <span className="preset__badge">مناسب لجهازك</span>}
+                  {p.id === '1440' && <span className="preset__badge">جودة عالية</span>}
                   <strong className="num">{p.label}</strong>
                   <span>{p.name}</span>
                   <small className="num">≈ {(presetKbps(p, codecId, fps) / 1000).toFixed(1)} Mbps</small>
                 </button>
               ))}
             </div>
-            {fps === 30 && <p className="hint">30 إطار تقلل حمل الترميز للنصف — مثالية للأجهزة المحدودة.</p>}
+            <p className="hint">الهدف {preset.width}×{preset.height} عند {fps} إطار. اختر مصدراً بهذه الدقة؛ فيديو 30 إطار لا يتحول إلى حركة 60 إطار بتكراره.</p>
           </section>
 
           <section className="studio__block">
@@ -225,7 +262,7 @@ function SetupPanel({ onClose, onOpen }) {
             <div className="codecs">
               <button className="codec" aria-pressed={codec === 'auto'} onClick={() => setCodec('auto')}>
                 <span className="codec__name">تلقائي</span>
-                <span className="codec__note">{probes ? `${autoProbe?.label ?? 'H.264'} — الأنسب لجهازك وللمشاهدين` : 'جارٍ فحص كرت الشاشة…'}</span>
+                <span className="codec__note">{probes ? `${autoProbe?.label ?? 'H.264'} — حسب قدرات المتصفح` : 'جارٍ فحص الجودة المحددة…'}</span>
                 {probes ? <HwBadge hw={autoProbe?.hw} /> : <LoaderCircle size={14} className="spin" />}
               </button>
               {(probes ?? VIDEO_CODECS).map((c) => (
@@ -242,6 +279,7 @@ function SetupPanel({ onClose, onOpen }) {
                 </button>
               ))}
             </div>
+            {selectedProbe?.smooth === false && <p className="settings-warn">المتصفح يتوقع صعوبة في هذه الجودة. شغّل فحص الجهاز قبل البث.</p>}
           </section>
 
           <section className="studio__block">
@@ -263,8 +301,27 @@ function SetupPanel({ onClose, onOpen }) {
               onChange={(e) => setOverride({ key: bitrateKey, kbps: Number(e.target.value) })}
             />
             <p className="hint">
-              تحتاج سرعة رفع ≈ <b className="num">{uploadMbps.toFixed(1)} Mbps</b> — ويبقى نفس الحمل مهما زاد عدد المشاهدين.
+              نوصي بسرعة رفع مستقرة ≈ <b className="num">{uploadMbps.toFixed(1)} Mbps</b> مع هامش للاتصال. معدل البت سقف؛ المتصفح يضبط الإرسال حسب المشهد والشبكة.
             </p>
+          </section>
+
+          <section className="studio__block">
+            <span className="label">فحص الجهاز والألوان</span>
+            <p className="hint">فحص محلي لمدة 20 ثانية للترميز وفك الترميز على الجهاز نفسه. أبقِ التبويب ظاهراً. يستخدم لوحة ألوان وحركة تجريبية ولا يختبر سرعة الإنترنت أو أداء اللعبة.</p>
+            <button className="btn btn--block" disabled={checking || busy || !probes || selectedProbe?.supported === false} onClick={runCheck}>
+              {checking ? <LoaderCircle size={16} className="spin" /> : <Cpu size={16} />}
+              {checking ? `جارٍ فحص الجهاز… ${checkProgress}%` : `اختبار ${preset.label} / ${fps} على هذا الجهاز`}
+            </button>
+            {checking && <button className="link-btn" onClick={() => checkRef.current?.abort()}>إلغاء الفحص</button>}
+            {result && (
+              <div role="status" className={result.passed ? 'hint' : 'settings-warn'}>
+                <strong>{result.passed ? 'حافظ الجهاز على الهدف في الفحص المحلي.' : 'لم نثبت ثبات الهدف في الفحص المحلي.'}</strong>
+                <p>أقل إطارات مقاسة: المصدر {result.captureFps ?? '—'} · الإرسال {result.sentFps ?? '—'} · الاستقبال {result.receivedFps ?? '—'} fps.</p>
+                <p>الدقة المستقبلة: {result.width ?? '—'}×{result.height ?? '—'} · {result.codec ?? '—'} · {result.hw === true ? 'ترميز بالعتاد' : result.hw === false ? 'ترميز برمجي' : 'نوع المرمّز غير معلن'}.</p>
+                <p>متوسط فرق عينات الألوان SDR: {result.colorError ?? '—'} / 255؛ الأقل أقرب للمصدر. هذا فحص عينات وليس معايرة للشاشة أو إثباتاً لألوان HDR.</p>
+              </div>
+            )}
+            <p className="hint">نرسل ألوان المصدر كما يلتقطها المتصفح. إذا ظهرت باهتة، قارن لوحة الألوان من «بث تجريبي». يحتاج HDR إلى توافق الالتقاط والترميز وشاشة المشاهد؛ زيادة التشبع لا تصلح اختلاف النطاق.</p>
           </section>
 
           <footer className="studio__foot">
@@ -295,7 +352,7 @@ function SetupPanel({ onClose, onOpen }) {
                 {error}
               </p>
             )}
-            <button className="btn btn--primary btn--lg btn--block" onClick={start} disabled={busy}>
+            <button className="btn btn--primary btn--lg btn--block" onClick={start} disabled={busy || checking || selectedProbe?.supported === false}>
               {busy ? <LoaderCircle size={18} className="spin" /> : <Radio size={18} />}
               <span>{busy ? 'جارٍ التجهيز…' : 'ابدأ البث الآن'}</span>
             </button>
@@ -364,11 +421,11 @@ function HwBadge({ hw }) {
     return (
       <span className="chip chip--good codec__hw">
         <Cpu size={12} />
-        كرت الشاشة
+        مرجّح بالعتاد
       </span>
     );
   }
-  if (hw === false) return <span className="chip codec__hw">برمجي</span>;
+  if (hw === false) return <span className="chip codec__hw">قد يستهلك موارد أكثر</span>;
   return null;
 }
 
@@ -376,9 +433,10 @@ function LivePanel({ onClose }) {
   const status = useStore(streamStore, (s) => s.status);
   const message = useStore(streamStore, (s) => s.message);
   const publish = useStore(streamStore, (s) => s.publish);
+  const stats = useStore(streamStore, (s) => s.stats);
   const previewHidden = useStore(streamStore, (s) => s.previewHidden);
   const config = useStore(streamStore, (s) => s.config);
-  const [kbps, setKbps] = useState(publish?.kbps ?? 6000);
+  const [draft, setDraft] = useState(null);
   const [copied, copy] = useCopy();
   const commitTimer = useRef(0);
 
@@ -386,11 +444,16 @@ function LivePanel({ onClose }) {
 
   if (!publish) return null;
   const preset = PRESETS.find((p) => p.id === publish.presetId);
+  const kbps = draft ?? publish.requestedKbps;
+  const quality = assessQuality(stats, publish);
 
   const onBitrate = (value) => {
-    setKbps(value);
+    setDraft(value);
     clearTimeout(commitTimer.current);
-    commitTimer.current = setTimeout(() => setLiveBitrate(value), 350);
+    commitTimer.current = setTimeout(async () => {
+      await setLiveBitrate(value);
+      setDraft((current) => current === value ? null : current);
+    }, 350);
   };
 
   return (
@@ -403,6 +466,8 @@ function LivePanel({ onClose }) {
         </span>
       </div>
       {message && status !== 'live' && <p className="studio__error">{message}</p>}
+      <p className={`hint tone-${quality.tone}`} role="status">{quality.text}</p>
+      {publish.encodingError && <p className="settings-warn" role="alert">{publish.encodingError}</p>}
 
       <div className="live-stats">
         <StatsPanel />
@@ -411,7 +476,7 @@ function LivePanel({ onClose }) {
       <section className="studio__block">
         <div className="studio__row">
           <label className="label" htmlFor="live-bitrate">
-            معدل البت أثناء البث
+            سقف معدل البت المطلوب
           </label>
           <span className="chip chip--accent num">{(kbps / 1000).toFixed(1)} Mbps</span>
         </div>
@@ -426,6 +491,7 @@ function LivePanel({ onClose }) {
           style={{ '--pct': `${((kbps - 1000) / 29000) * 100}%` }}
           onChange={(e) => onBitrate(Number(e.target.value))}
         />
+        <p className="hint">السقف المطبّق: {(publish.kbps / 1000).toFixed(1)} Mbps. ينخفض عند ازدحام مستمر ويعود تدريجياً عند تحسن الشبكة.</p>
       </section>
 
       <div className="live-actions">

@@ -324,10 +324,10 @@ export default function Player({ onOpen }) {
               <button
                 className={`latency-toggle ${lowLatency ? 'is-on' : ''}`}
                 onClick={() => setLowLatency(!lowLatency)}
-                title={lowLatency ? 'لحظي: بدون مخزن مؤقت — أقل تأخير (L)' : 'سلس: مخزن مؤقت صغير للشبكات الضعيفة (L)'}
+                title={lowLatency ? 'تأخير منخفض: مخزن مستهدف 100 مللي ثانية (L)' : 'سلس: المتصفح يحدد المخزن تلقائياً (L)'}
               >
                 <Zap size={15} />
-                <span>{lowLatency ? 'لحظي' : 'سلس'}</span>
+                <span>{lowLatency ? 'تأخير منخفض' : 'سلس'}</span>
               </button>
             )}
             <Ctl label="الإحصائيات (I)" active={showStats} onClick={() => setShowStats((v) => !v)}>

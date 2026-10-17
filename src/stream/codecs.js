@@ -1,7 +1,5 @@
-// Codec choice decides most of the CPU cost. A hardware ("powerEfficient")
-// encoder costs the broadcaster almost nothing, and H.264 is hardware-decoded
-// on virtually every viewer device — so it is the default unless the user
-// asks for AV1's better quality-per-megabit.
+// Capability probes are estimates; the actual encoder is checked in getStats.
+// Prefer broadly compatible H.264 when the requested workload is supported.
 
 export const VIDEO_CODECS = [
   { id: 'h264', mime: 'video/H264', label: 'H.264', note: 'الأخف على أجهزة المشاهدين' },
@@ -12,7 +10,7 @@ export const VIDEO_CODECS = [
 
 const capsOf = (side) => {
   try {
-    return side.getCapabilities?.('video')?.codecs ?? [];
+    return side?.getCapabilities?.('video')?.codecs ?? [];
   } catch {
     return [];
   }
@@ -37,16 +35,17 @@ export async function probeEncoders(target) {
   const sendable = capsOf(window.RTCRtpSender);
   return Promise.all(
     VIDEO_CODECS.map(async (codec) => {
-      const supported = sendable.some((c) => sameMime(c.mimeType, codec.mime));
-      const info = supported ? await mediaInfo('encodingInfo', codec.mime, target) : null;
-      return { ...codec, supported, hw: info ? info.powerEfficient : null, smooth: info ? info.smooth : null };
+      const advertised = sendable.some((c) => sameMime(c.mimeType, codec.mime));
+      const kbps = target.codecKbps?.[codec.id] ?? target.kbps;
+      const info = advertised ? await mediaInfo('encodingInfo', codec.mime, { ...target, kbps }) : null;
+      return { ...codec, supported: advertised && info?.supported !== false, hw: info?.powerEfficient ?? null, smooth: info?.smooth ?? null };
     }),
   );
 }
 
 const decodeCache = new Map();
 export async function probeDecoder(mime, target) {
-  const key = `${mime}|${target.width}x${target.height}@${target.fps}`;
+  const key = `${mime}|${target.width}x${target.height}@${target.fps}|${target.kbps}`;
   if (!decodeCache.has(key)) {
     decodeCache.set(key, mediaInfo('decodingInfo', mime, target).then((info) => (info ? info.powerEfficient : null)));
   }
@@ -55,9 +54,9 @@ export async function probeDecoder(mime, target) {
 
 export function pickAutoCodec(probes) {
   const ok = (id) => probes.find((p) => p.id === id && p.supported);
-  if (ok('h264')?.hw) return 'h264';
-  if (ok('av1')?.hw) return 'av1';
-  if (ok('vp9')?.hw) return 'vp9';
+  for (const id of ['h264', 'av1', 'vp9', 'vp8']) {
+    if (ok(id)?.hw && ok(id).smooth !== false) return id;
+  }
   // No hardware encoder: OpenH264 / libvpx VP8 are the cheapest software paths.
   return ok('h264') ? 'h264' : ok('vp8') ? 'vp8' : probes.find((p) => p.supported)?.id ?? 'vp8';
 }

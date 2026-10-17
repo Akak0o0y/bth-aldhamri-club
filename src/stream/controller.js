@@ -7,24 +7,14 @@ import { createStore } from '../lib/store';
 import { prefsStore, setPref, toast } from '../ui/prefs';
 import { VIDEO_CODECS, probeDecoder } from './codecs';
 import { loadConfig, saveConfig, whepUrl, whipUrl } from './config';
-import { constantFrameRate } from './pacer';
+import { createNetworkGuard } from './networkGuard';
+import { captureOptions } from './quality';
 import { createSampler } from './stats';
 import { createTestPattern } from './testPattern';
 import { WhepPlayer } from './whep';
 import { WhipPublisher } from './whip';
 
-// Bitrates per codec at 60fps; AV1 needs ~40% less for the same picture.
-export const PRESETS = [
-  { id: '2160', label: '4K', name: 'Ultra HD', width: 3840, height: 2160, kbps: { h264: 20000, av1: 12000, vp9: 14000, vp8: 24000 } },
-  { id: '1440', label: '2K', name: 'QHD', width: 2560, height: 1440, kbps: { h264: 12000, av1: 7000, vp9: 8000, vp8: 14000 } },
-  { id: '1080', label: '1080p', name: 'Full HD', width: 1920, height: 1080, kbps: { h264: 7000, av1: 4000, vp9: 4500, vp8: 8000 } },
-  { id: '720', label: '720p', name: 'HD', width: 1280, height: 720, kbps: { h264: 3500, av1: 2000, vp9: 2500, vp8: 4000 } },
-];
-
-export function presetKbps(preset, codecId, fps) {
-  const base = preset.kbps[codecId] ?? preset.kbps.h264;
-  return Math.round((fps >= 50 ? base : base * 0.65) / 100) * 100;
-}
+export { PRESETS, presetKbps } from './quality';
 
 export const streamStore = createStore({
   role: 'viewer', // 'viewer' | 'host'
@@ -42,14 +32,18 @@ const set = streamStore.set;
 let player = null;
 let publisher = null;
 let localStream = null;
-let pacer = null; // { stream, stop } holding a screen capture at a fixed fps
 let statsTimer = null;
+let statsEpoch = 0;
+let networkGuard = createNetworkGuard();
+let bitrateRevision = 0;
+let manualBitratePending = 0;
 let cpuStrikes = 0;
 let decodeKey = '';
 
 // --- stats -----------------------------------------------------------------
 
 function stopStats() {
+  statsEpoch++;
   clearInterval(statsTimer);
   statsTimer = null;
 }
@@ -58,24 +52,39 @@ function startStats(pc, role) {
   stopStats();
   if (!pc) return;
   const sample = createSampler(pc, role);
+  const epoch = statsEpoch;
+  let sampling = false;
   statsTimer = setInterval(async () => {
-    if (role === 'viewer' && document.hidden) return;
+    if (sampling || (role === 'viewer' && document.hidden)) return;
+    sampling = true;
     try {
       const stats = await sample();
+      if (epoch !== statsEpoch) return;
+      if (role === 'host') {
+        const settings = localStream?.getVideoTracks()[0]?.getSettings();
+        stats.captureWidth ??= settings?.width ?? null;
+        stats.captureHeight ??= settings?.height ?? null;
+      }
       set({ stats });
-      if (role === 'viewer') checkDecoder(stats);
+      if (role === 'viewer') checkDecoder(stats, epoch);
       else {
-        tcpGuard(stats);
+        await guardNetwork(stats);
+        if (epoch !== statsEpoch) return;
         cpuGuard(stats);
       }
     } catch {
       // Connection closed between two ticks.
+    } finally {
+      sampling = false;
     }
   }, 1000);
 }
 
-function checkDecoder(stats) {
-  if (stats.hw !== null) return set({ hwDecode: stats.hw });
+function checkDecoder(stats, epoch) {
+  if (typeof stats.hw === 'boolean') {
+    decodeKey = '';
+    return set({ hwDecode: stats.hw });
+  }
   if (!stats.codec || !stats.width) return;
   const key = `${stats.codec}:${stats.width}x${stats.height}`;
   if (key === decodeKey) return;
@@ -85,30 +94,20 @@ function checkDecoder(stats) {
     height: stats.height,
     fps: stats.fps || 30,
     kbps: stats.kbps || 4000,
-  }).then((hw) => set({ hwDecode: hw }));
+  }).then((hw) => {
+    if (epoch === statsEpoch && decodeKey === key) set({ hwDecode: hw });
+  });
 }
 
-// A server without public UDP (Railway) carries media over ICE-TCP, where any
-// bitrate the uplink can't keep up with queues as seconds of delay instead of
-// being dropped. Measured on that path: 2 Mbps held ~230 ms, 4 Mbps already
-// spiked past 500 ms. So once we see a TCP route, cap to what stays live.
-function tcpGuard(stats) {
+async function guardNetwork(stats) {
   const pub = streamStore.get().publish;
-  if (!pub || !publisher || pub.tcpCap || stats.protocol !== 'tcp') return;
-  const height = PRESETS.find((p) => p.id === pub.presetId)?.height ?? 1080;
-  // Resolution and frame rate stay as chosen; only the bitrate is capped, or
-  // TCP's queueing would push the delay to seconds.
-  const tcpCap = height > 1080 ? 6000 : height > 720 ? 4000 : 2500;
-  const kbps = Math.min(pub.kbps, tcpCap);
-  publisher.updateEncoding({ videoKbps: kbps });
-  set({ publish: { ...pub, kbps, tcpCap } });
-  if (kbps < pub.kbps) {
-    toast(`شبكتك تمنع UDP فالبث يمر عبر TCP — حدّدنا البث بـ ${kbps / 1000} Mbps مع نفس الدقة ليبقى التأخير قليلاً`, 'warn');
-  }
+  if (!pub || !publisher || manualBitratePending) return;
+  const kbps = networkGuard(stats, pub.kbps, pub.requestedKbps);
+  if (kbps === null) return;
+  await applyBitrate(kbps, false);
 }
 
-// Chrome already adapts under load, but stepping 60 -> 30fps ourselves is
-// steadier than letting the encoder oscillate — and we can tell the host why.
+// Explain the browser's adaptation without promising a resolution/FPS lock.
 function cpuGuard(stats) {
   const pub = streamStore.get().publish;
   if (!pub || !publisher || pub.guarded) return;
@@ -118,8 +117,7 @@ function cpuGuard(stats) {
   // The encoder already gives way as the streamer chose (see WhipPublisher):
   // just say what's happening and how to avoid it.
   set({ publish: { ...pub, guarded: true } });
-  const gave = pub.contentHint === 'motion' ? 'نثبّت الإطارات ونخفض الدقة مؤقتاً' : 'نثبّت الدقة لكن قد تقل الإطارات';
-  toast(`المعالج لا يلحق — ${gave}. لتثبيت الاثنين: OBS مع كرت الشاشة (NVENC/AMF)`, 'warn');
+  toast('الجهاز لا يلحق بالترميز — أغلق البرامج الثقيلة وتحقق من تسريع الرسوميات في المتصفح. راقب الدقة والإطارات الفعلية.', 'warn');
 }
 
 // --- watching --------------------------------------------------------------
@@ -172,17 +170,7 @@ export function updateConfig(next) {
 
 async function capture(source, preset, fps) {
   if (source === 'screen') {
-    return navigator.mediaDevices.getDisplayMedia({
-      video: {
-        width: { max: preset.width },
-        height: { max: preset.height },
-        frameRate: { ideal: fps, max: fps },
-      },
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false },
-      systemAudio: 'include',
-      surfaceSwitching: 'include',
-      selfBrowserSurface: 'exclude',
-    });
+    return navigator.mediaDevices.getDisplayMedia(captureOptions(preset, fps));
   }
   if (source === 'camera') {
     return navigator.mediaDevices.getUserMedia({
@@ -190,7 +178,7 @@ async function capture(source, preset, fps) {
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
   }
-  return createTestPattern({ fps: Math.min(fps, 30) });
+  return createTestPattern({ width: preset.width, height: preset.height, fps });
 }
 
 export async function goLive({ source, preset, fps, codecId, contentHint, kbps }) {
@@ -209,14 +197,17 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
   const music = source === 'screen';
   const codecLabel = VIDEO_CODECS.find((c) => c.id === codecId)?.label ?? codecId;
   cpuStrikes = 0;
+  networkGuard = createNetworkGuard();
+  bitrateRevision++;
+  manualBitratePending = 0;
   set({
     role: 'host',
     stream,
     status: 'connecting',
     message: '',
     stats: null,
-    previewHidden: false,
-    publish: { source, presetId: preset.id, codecId, codecLabel, fps, kbps, contentHint, guarded: false },
+    previewHidden: source !== 'test' && preset.height >= 1440,
+    publish: { source, presetId: preset.id, width: preset.width, height: preset.height, codecId, codecLabel, fps, kbps, requestedKbps: kbps, contentHint, guarded: false, encodingError: '' },
   });
 
   // A logged-in streamer sends their session; otherwise the saved name+password.
@@ -231,21 +222,25 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
   // One id for the whole broadcast, reconnects included: the relay starts the
   // channel's chat over only when it changes.
   const session = Math.random().toString(36).slice(2, 10);
-  // A screen only yields frames when it changes; send them at a fixed rate.
-  // Cameras and the test pattern already run at a steady one.
-  pacer = source === 'screen' ? constantFrameRate(stream, fps) : null;
+  // Send native frames, preserving capture timestamps and colour metadata.
+  // Duplicating frames at 60 Hz hid low capture rates and added processing.
   const current = new WhipPublisher({
     url: `${whipUrl(config)}?session=${session}`,
     token,
     user: config.publishUser,
     pass: config.publishPass,
-    stream: pacer?.stream ?? stream,
+    stream,
     codecId,
     videoKbps: kbps,
     fps,
     contentHint,
     music,
     audioKbps: music ? 128 : 64,
+    onEncodingError: () => {
+      if (publisher !== current) return;
+      const pub = streamStore.get().publish;
+      if (pub) set({ publish: { ...pub, encodingError: 'المتصفح لم يطبّق إعدادات الترميز المطلوبة؛ راقب القياس الفعلي.' } });
+    },
     onStatus: (status, message) => {
       if (status === 'unauthorized') {
         // Say why once and go back to watching instead of a stuck red chip.
@@ -264,6 +259,10 @@ export async function goLive({ source, preset, fps, codecId, contentHint, kbps }
   });
   publisher = current;
   current.start();
+  const settings = stream.getVideoTracks()[0]?.getSettings();
+  if (settings?.width < preset.width || settings?.height < preset.height) {
+    toast(`المصدر ${settings.width}×${settings.height} أصغر من الهدف؛ اختر تبويباً أو شاشة بالدقة المطلوبة.`, 'warn');
+  }
   return { ok: true };
 }
 
@@ -272,20 +271,45 @@ export function stopLive() {
   publisher?.stop();
   publisher = null;
   stopStats();
-  pacer?.stop();
-  pacer = null;
+  bitrateRevision++;
+  manualBitratePending = 0;
   localStream?.getTracks().forEach((t) => t.stop());
   localStream = null;
   set({ publish: null, stats: null, stream: null, status: 'idle', previewHidden: false });
   startViewing();
 }
 
-export function setLiveBitrate(kbps) {
+async function applyBitrate(kbps, manual) {
   const pub = streamStore.get().publish;
-  if (!pub || !publisher) return;
-  if (pub.tcpCap) kbps = Math.min(kbps, pub.tcpCap);
-  publisher.updateEncoding({ videoKbps: kbps });
-  set({ publish: { ...pub, kbps } });
+  const current = publisher;
+  if (!pub || !current || !Number.isFinite(kbps)) return false;
+  kbps = Math.max(1000, Math.min(30000, Math.round(kbps)));
+  const revision = ++bitrateRevision;
+  if (manual) {
+    manualBitratePending = revision;
+    networkGuard = createNetworkGuard();
+  }
+  try {
+    const applied = await current.updateEncoding({ videoKbps: kbps });
+    if (publisher !== current) return false;
+    if (!applied && revision !== bitrateRevision) return false;
+    if (!applied) throw new Error('Sender is not ready');
+    // Record every successful serialized write. A newer queued change may
+    // fail, in which case this intermediate value is the real sender setting.
+    set({ publish: { ...streamStore.get().publish, kbps, ...(manual ? { requestedKbps: kbps } : {}), encodingError: '' } });
+    return revision === bitrateRevision;
+  } catch {
+    if (publisher === current && revision === bitrateRevision) {
+      set({ publish: { ...streamStore.get().publish, encodingError: 'تعذر تغيير معدل البت؛ الإعداد السابق ما زال مطلوباً.' } });
+    }
+    return false;
+  } finally {
+    if (manualBitratePending === revision) manualBitratePending = 0;
+  }
+}
+
+export function setLiveBitrate(kbps) {
+  return applyBitrate(kbps, true);
 }
 
 export function setPreviewHidden(hidden) {

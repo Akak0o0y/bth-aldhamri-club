@@ -121,18 +121,18 @@ export function tunePublisherOffer(sdp, opts) {
 }
 
 // Publisher answer: Chrome reads send-side limits from the remote description.
-// x-google-start-bitrate skips the slow ramp-up so the first seconds are
-// already sharp instead of starting at ~300 kbps and climbing.
+// Leave room for live slider changes, but do not impose a bitrate floor that
+// fights congestion control. Ramp up from a modest starting rate.
 export function tunePublisherAnswer(sdp, { videoKbps, music, audioKbps }) {
   let out = editMedia(sdp, 'video', (lines) => {
     for (let i = lines.length - 1; i >= 0; i--) if (lines[i].startsWith('b=')) lines.splice(i, 1);
     const c = lines.findIndex((l) => l.startsWith('c='));
-    lines.splice(c + 1, 0, `b=AS:${videoKbps}`, `b=TIAS:${videoKbps * 1000}`);
+    lines.splice(c + 1, 0, 'b=AS:30000', 'b=TIAS:30000000');
     for (const pt of payloadTypes(lines, /^(H264|VP8|VP9|AV1|H265)$/i)) {
       mergeFmtp(lines, pt, {
-        'x-google-start-bitrate': Math.round(videoKbps * 0.7),
-        'x-google-min-bitrate': Math.round(videoKbps * 0.25),
-        'x-google-max-bitrate': videoKbps,
+        'x-google-start-bitrate': Math.min(videoKbps, 6000),
+        'x-google-min-bitrate': 0,
+        'x-google-max-bitrate': 30000,
       });
     }
   });

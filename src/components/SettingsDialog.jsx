@@ -180,8 +180,8 @@ export default function SettingsDialog({ onClose }) {
           الأداء
         </h3>
         <ToggleRow
-          title="وضع اللحظي (بدون مخزن مؤقت)"
-          desc="يعرض كل إطار فور وصوله — أقل تأخير ممكن. أطفئه فقط إذا كانت شبكتك ضعيفة وتلاحظ تقطيعاً."
+          title="تأخير منخفض مع مخزن صغير"
+          desc="يطلب مخزناً قدره 100 مللي ثانية لامتصاص تذبذب الشبكة. عند إطفائه يختار المتصفح المخزن تلقائياً."
           checked={prefs.lowLatency}
           onChange={(v) => setLowLatency(v)}
         />
