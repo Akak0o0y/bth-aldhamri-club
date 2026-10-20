@@ -1,0 +1,120 @@
+# XcodeGen spec for the iPhone/iPad broadcaster (docs/ios-broadcaster.md).
+# On a Mac: `brew install xcodegen`, then `xcodegen generate` in ios/ writes
+# Dhamri.xcodeproj plus the Info.plist and entitlements files listed here.
+name: Dhamri
+
+options:
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: ar
+  createIntermediateGroups: true
+
+settings:
+  base:
+    # Your own reverse-DNS id: bundle ids and App Groups are unique per Apple
+    # developer team, so change this before signing. The extension
+    # (<id>.broadcast) and the App Group (group.<id>) follow it.
+    DHAMRI_BUNDLE_ID: com.dhamri.broadcaster
+    DHAMRI_APP_GROUP: group.$(DHAMRI_BUNDLE_ID)
+    # Or pick the team in Xcode's Signing & Capabilities tab.
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+packages:
+  # Google's WebRTC (libwebrtc) as a prebuilt xcframework, one release per
+  # Chromium milestone. See docs/ios-broadcaster.md for why this library.
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    from: "155.0.0"
+  DhamriCore:
+    path: Packages/DhamriCore
+
+targets:
+  Dhamri:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    dependencies:
+      - target: DhamriBroadcast
+      - package: DhamriCore
+      # The app doesn't use WebRTC itself; it carries the framework so the
+      # extension can load it from the app bundle (extensions must not embed
+      # frameworks of their own in an App Store build).
+      - package: WebRTC
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: بث الضمري
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        DhamriAppGroup: $(DHAMRI_APP_GROUP)
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    entitlements:
+      path: App/App.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(DHAMRI_APP_GROUP)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(DHAMRI_BUNDLE_ID)
+
+  DhamriBroadcast:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Broadcast
+      - Shared
+    dependencies:
+      - package: DhamriCore
+      - package: WebRTC
+        embed: false
+      - sdk: ReplayKit.framework
+      - sdk: VideoToolbox.framework
+    info:
+      path: Broadcast/Info.plist
+      properties:
+        CFBundleDisplayName: بث الضمري
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        DhamriAppGroup: $(DHAMRI_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+    entitlements:
+      path: Broadcast/Broadcast.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(DHAMRI_APP_GROUP)
+    settings:
+      base:
+        # The app's picker looks for exactly this id (BroadcastPicker.swift).
+        PRODUCT_BUNDLE_IDENTIFIER: $(DHAMRI_BUNDLE_ID).broadcast
+        APPLICATION_EXTENSION_API_ONLY: YES
+
+schemes:
+  Dhamri:
+    build:
+      targets:
+        Dhamri: all
+        DhamriBroadcast: all
+    run:
+      config: Debug
+    archive:
+      config: Release
