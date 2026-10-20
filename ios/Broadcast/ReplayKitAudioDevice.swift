@@ -6,6 +6,7 @@
 // channel (ObjCAudioDeviceModule::OnDeliverRecordedData).
 import AVFoundation
 import CoreMedia
+import QuartzCore
 import WebRTC
 import DhamriCore
 
@@ -22,6 +23,8 @@ final class ReplayKitAudioDevice: NSObject, RTCAudioDevice {
     private var delegate: RTCAudioDeviceDelegate?
     private var timer: DispatchSourceTimer?
     private var sampleTime = 0.0
+    private var startedAt = 0.0
+    private var delivered = 0
     private var recording = false
 
     // MARK: - RTCAudioDevice
@@ -42,7 +45,7 @@ final class ReplayKitAudioDevice: NSObject, RTCAudioDevice {
     var isRecording: Bool { lock.withLock { recording } }
 
     func initialize(with delegate: RTCAudioDeviceDelegate) -> Bool {
-        self.delegate = delegate
+        lock.withLock { self.delegate = delegate }
         isInitialized = true
         return true
     }
@@ -50,7 +53,7 @@ final class ReplayKitAudioDevice: NSObject, RTCAudioDevice {
     func terminateDevice() -> Bool {
         _ = stopRecording()
         _ = stopPlayout()
-        delegate = nil
+        lock.withLock { delegate = nil }
         isInitialized = false
         return true
     }
@@ -79,6 +82,8 @@ final class ReplayKitAudioDevice: NSObject, RTCAudioDevice {
     func startRecording() -> Bool {
         guard !isRecording else { return true }
         mixer.reset()
+        startedAt = CACurrentMediaTime()
+        delivered = 0
         lock.withLock { recording = true }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: inputIOBufferDuration, leeway: .milliseconds(1))
@@ -116,7 +121,7 @@ final class ReplayKitAudioDevice: NSObject, RTCAudioDevice {
         guard CMSampleBufferCopyPCMDataIntoAudioBufferList(sampleBuffer, at: 0, frameCount: Int32(frames), into: input.mutableAudioBufferList) == noErr else { return }
         if bigEndian { Self.swapBytes(input, bits: Int(format.mBitsPerChannel)) }
 
-        guard let converter = converter(for: source, from: inputFormat) else { return }
+        guard let converter = makeConverter(for: source, from: inputFormat) else { return }
         let capacity = AVAudioFrameCount(Double(frames) * Self.sampleRate / inputFormat.sampleRate) + 64
         guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { return }
         var supplied = false
@@ -134,7 +139,7 @@ final class ReplayKitAudioDevice: NSObject, RTCAudioDevice {
         mixer.push(UnsafeBufferPointer(start: samples[0], count: Int(output.frameLength)), from: source)
     }
 
-    private func converter(for source: AudioMixer.Source, from format: AVAudioFormat) -> AVAudioConverter? {
+    private func makeConverter(for source: AudioMixer.Source, from format: AVAudioFormat) -> AVAudioConverter? {
         if let existing = converters[source], existing.inputFormat == format { return existing }
         guard let converter = AVAudioConverter(from: format, to: outputFormat) else { return nil }
         // App audio is stereo: mix both sides instead of keeping the left.
@@ -161,9 +166,21 @@ final class ReplayKitAudioDevice: NSObject, RTCAudioDevice {
     }
 
     /// Every 10 ms: the mix so far, or silence, so the Opus stream never
-    /// stalls when nothing is playing.
+    /// stalls when nothing is playing. A late timer doesn't fire twice, so
+    /// chunks are counted against the clock and missed ones sent at once.
     private func deliver() {
-        guard isRecording, let delegate else { return }
+        guard isRecording, let delegate = lock.withLock({ self.delegate }) else { return }
+        let due = Int((CACurrentMediaTime() - startedAt) / inputIOBufferDuration)
+        // After a long stall (the process was suspended) skip ahead instead
+        // of sending a burst.
+        if due - delivered > 10 { delivered = due - 1 }
+        while delivered < due {
+            deliverChunk(to: delegate)
+            delivered += 1
+        }
+    }
+
+    private func deliverChunk(to delegate: RTCAudioDeviceDelegate) {
         var samples = [Int16](repeating: 0, count: Self.chunk)
         samples.withUnsafeMutableBufferPointer { mixer.pull(into: $0) }
         var flags = AudioUnitRenderActionFlags()

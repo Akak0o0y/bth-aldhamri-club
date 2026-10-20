@@ -187,13 +187,13 @@ public final class RelayAPI {
 
     public func login(name: String, pass: String) async throws -> StreamerSession {
         try await withCheckedThrowingContinuation { continuation in
-            login(name: name, pass: pass) { continuation.resume(with: $0) }
+            login(name: name, pass: pass) { result in continuation.resume(with: result.mapError { $0 as Error }) }
         }
     }
 
     public func me(token: String) async throws -> Account {
         try await withCheckedThrowingContinuation { continuation in
-            me(token: token) { continuation.resume(with: $0) }
+            me(token: token) { result in continuation.resume(with: result.mapError { $0 as Error }) }
         }
     }
 }

@@ -3,11 +3,18 @@
 // hands it every screen frame and audio buffer, and ends it on Stop. It runs
 // under a ~50 MB memory limit, so frames are scaled down before WebRTC sees
 // them and nothing is kept that isn't needed.
+import Foundation
 import ReplayKit
 import DhamriCore
 
 final class SampleHandler: RPBroadcastSampleHandler {
-    private var session: BroadcastSession?
+    // Read on ReplayKit's sample thread, set from its control callbacks.
+    private let lock = NSLock()
+    private var current: BroadcastSession?
+    private var session: BroadcastSession? {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         guard let streamer = SharedStore.loadSession(), !streamer.token.isEmpty else {

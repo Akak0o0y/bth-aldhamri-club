@@ -39,6 +39,10 @@ final class HoldNotifier: NSObject, URLSessionWebSocketDelegate {
         queue.async {
             self.finished = true
             guard let task = self.task else {
+                // Between reconnects: nothing to say, but the session still
+                // holds on to us until it is invalidated.
+                self.session?.invalidateAndCancel()
+                self.session = nil
                 done.signal()
                 return
             }

@@ -4,7 +4,7 @@ import DhamriCore
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var session = SharedStore.loadSession()
-    @Published private(set) var status = SharedStore.status
+    @Published private(set) var status = AppModel.currentStatus()
     @Published var settings = SharedStore.settings {
         didSet { SharedStore.settings = settings }
     }
@@ -63,7 +63,16 @@ final class AppModel: ObservableObject {
     /// status while the app was in the background.
     func reload() {
         session = SharedStore.loadSession()
-        status = SharedStore.status
+        status = AppModel.currentStatus()
+    }
+
+    /// A status the extension stopped refreshing belongs to a broadcast iOS
+    /// ended without a goodbye (memory limit, crash): show it as over. Fixed
+    /// values, so polling doesn't republish an unchanged state.
+    nonisolated private static func currentStatus() -> BroadcastStatus? {
+        SharedStore.status.map { status in
+            status.isStale && status.state != .error ? BroadcastStatus(state: .idle, updated: .distantPast) : status
+        }
     }
 
     func startWatching() {
@@ -71,7 +80,7 @@ final class AppModel: ObservableObject {
         watcher = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                let next = SharedStore.status
+                let next = AppModel.currentStatus()
                 if next != self.status { self.status = next }
                 if self.session != nil, SharedStore.loadSession() == nil { self.session = nil }
             }

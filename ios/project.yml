@@ -107,6 +107,8 @@ targets:
         # The app's picker looks for exactly this id (BroadcastPicker.swift).
         PRODUCT_BUNDLE_IDENTIFIER: $(DHAMRI_BUNDLE_ID).broadcast
         APPLICATION_EXTENSION_API_ONLY: YES
+        # WebRTC.framework lives in the app's Frameworks folder, two levels up.
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
 
 schemes:
   Dhamri:

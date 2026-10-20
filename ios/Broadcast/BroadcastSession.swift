@@ -22,6 +22,7 @@ final class BroadcastSession {
     private var hold: HoldNotifier?
     private var heartbeat: DispatchSourceTimer?
     private var lastStatus = BroadcastStatus(state: .connecting)
+    private var stopped = false
 
     private static let setUp: Void = {
         _ = RTCInitializeSSL()
@@ -128,6 +129,7 @@ final class BroadcastSession {
         heartbeat?.cancel()
         heartbeat = nil
         let (notifier, publisher) = lock.withLock { () -> (HoldNotifier?, WhipPublisher?) in
+            stopped = true
             defer {
                 hold = nil
                 self.publisher = nil
@@ -143,14 +145,15 @@ final class BroadcastSession {
     }
 
     private func report(_ state: BroadcastStatus.State, _ message: String) {
-        let status = lock.withLock { () -> BroadcastStatus in
+        let status = lock.withLock { () -> BroadcastStatus? in
+            guard !stopped else { return nil }
             // While paused the publisher still reports its connection; keep
             // showing "paused" until ReplayKit resumes.
             let shown = hold != nil && state == .live ? BroadcastStatus.State.paused : state
             lastStatus = BroadcastStatus(state: shown, message: message)
             return lastStatus
         }
-        SharedStore.status = status
+        if let status { SharedStore.status = status }
     }
 
     /// Lets the app tell a running broadcast from one iOS killed (memory,
@@ -160,7 +163,7 @@ final class BroadcastSession {
         timer.schedule(deadline: .now() + 3, repeating: 3)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            var status = self.lock.withLock { self.lastStatus }
+            guard var status = self.lock.withLock({ self.stopped ? nil : self.lastStatus }) else { return }
             status.updated = Date()
             SharedStore.status = status
         }

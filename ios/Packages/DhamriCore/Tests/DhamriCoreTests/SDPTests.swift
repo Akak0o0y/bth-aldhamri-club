@@ -1,5 +1,6 @@
 // Expected strings come from running the site's src/stream/sdp.js in Node on
 // the same input, so the app's SDP must match the browser studio's exactly.
+import Foundation
 import XCTest
 @testable import DhamriCore
 

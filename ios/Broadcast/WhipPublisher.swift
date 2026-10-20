@@ -45,14 +45,14 @@ final class WhipPublisher: NSObject {
     /// Closes the connection and waits up to `wait` seconds for the DELETE,
     /// so viewers see the channel end at once instead of timing out.
     func stop(wait: TimeInterval) {
-        let resource = queue.sync { () -> URL? in
+        let ended = queue.sync { () -> URL? in
             stopped = true
             let resource = self.resource
             self.resource = nil
             teardown()
             return resource
         }
-        guard let resource else { return }
+        guard let resource = ended else { return }
         let done = DispatchSemaphore(value: 0)
         client.end(resource) { done.signal() }
         _ = done.wait(timeout: .now() + wait)

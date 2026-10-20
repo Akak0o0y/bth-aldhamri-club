@@ -80,17 +80,17 @@ final class ScreenVideoSource {
         // size: holding on to ReplayKit's own buffers starves its pool.
         let scaledSize = rotation.swapsSides ? PixelSize(width: upright.height, height: upright.width) : upright
         guard let scaled = scale(input, to: scaledSize) else { return nil }
-        guard rotation != .upright else { return (scaled, ._0) }
-        if let turned = rotate(scaled, rotation, to: upright) { return (turned, ._0) }
+        guard rotation != .upright else { return (buffer: scaled, rotation: RTCVideoRotation._0) }
+        if let turned = rotate(scaled, rotation, to: upright) { return (buffer: turned, rotation: RTCVideoRotation._0) }
         // VideoToolbox couldn't turn it: tell WebRTC, which rotates on the CPU.
-        return (scaled, RTCVideoRotation(rawValue: rotation.rawValue) ?? ._0)
+        return (buffer: scaled, rotation: RTCVideoRotation(rawValue: rotation.rawValue) ?? RTCVideoRotation._0)
     }
 
     private func scale(_ input: CVPixelBuffer, to size: PixelSize) -> CVPixelBuffer? {
         if scaler == nil {
-            var session: VTPixelTransferSession?
-            guard VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &session) == noErr,
-                  let session else { return nil }
+            var made: VTPixelTransferSession?
+            guard VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &made) == noErr,
+                  let session = made else { return nil }
             VTSessionSetProperty(session, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Normal)
             scaler = session
         }
@@ -100,9 +100,9 @@ final class ScreenVideoSource {
 
     private func rotate(_ input: CVPixelBuffer, _ rotation: ScreenRotation, to size: PixelSize) -> CVPixelBuffer? {
         if rotator == nil {
-            var session: VTPixelRotationSession?
-            guard VTPixelRotationSessionCreate(allocator: kCFAllocatorDefault, pixelRotationSessionOut: &session) == noErr,
-                  let session else { return nil }
+            var made: VTPixelRotationSession?
+            guard VTPixelRotationSessionCreate(allocator: kCFAllocatorDefault, pixelRotationSessionOut: &made) == noErr,
+                  let session = made else { return nil }
             rotator = session
         }
         let angle: CFString
@@ -129,9 +129,9 @@ final class ScreenVideoSource {
                 kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
             ]
             let poolAttributes: [String: Any] = [kCVPixelBufferPoolMinimumBufferCountKey as String: 3]
-            var created: CVPixelBufferPool?
-            guard CVPixelBufferPoolCreate(kCFAllocatorDefault, poolAttributes as CFDictionary, attributes as CFDictionary, &created) == kCVReturnSuccess,
-                  let created else { return nil }
+            var made: CVPixelBufferPool?
+            guard CVPixelBufferPoolCreate(kCFAllocatorDefault, poolAttributes as CFDictionary, attributes as CFDictionary, &made) == kCVReturnSuccess,
+                  let created = made else { return nil }
             pool = (created, size)
         }
         guard let current = pool?.pool else { return nil }
