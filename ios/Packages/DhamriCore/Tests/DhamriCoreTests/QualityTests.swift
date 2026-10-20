@@ -49,7 +49,10 @@ final class QualityTests: XCTestCase {
 
     func testFrameGateToleratesJitterAtThirty() {
         var gate = FrameGate(fps: 30)
-        let times = (0..<30).map { Double($0) / 30 + ($0 % 2 == 0 ? 0.003 : -0.003) }
+        let times: [Double] = (0..<30).map { (i: Int) -> Double in
+            let jitter: Double = i % 2 == 0 ? 0.003 : -0.003
+            return Double(i) / 30 + jitter
+        }
         XCTAssertEqual(times.filter { gate.accept(at: $0) }.count, 30)
     }
 }
