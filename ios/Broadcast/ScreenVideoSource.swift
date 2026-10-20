@@ -101,7 +101,7 @@ final class ScreenVideoSource {
     private func rotate(_ input: CVPixelBuffer, _ rotation: ScreenRotation, to size: PixelSize) -> CVPixelBuffer? {
         if rotator == nil {
             var made: VTPixelRotationSession?
-            guard VTPixelRotationSessionCreate(allocator: kCFAllocatorDefault, pixelRotationSessionOut: &made) == noErr,
+            guard VTPixelRotationSessionCreate(kCFAllocatorDefault, &made) == noErr,
                   let session = made else { return nil }
             rotator = session
         }
@@ -114,7 +114,7 @@ final class ScreenVideoSource {
         }
         guard let rotator, let output = makeBuffer(&rotatedPool, size: size) else { return nil }
         VTSessionSetProperty(rotator, key: kVTPixelRotationPropertyKey_Rotation, value: angle)
-        return VTPixelRotationSessionRotateImage(rotator, from: input, to: output) == noErr ? output : nil
+        return VTPixelRotationSessionRotateImage(rotator, input, output) == noErr ? output : nil
     }
 
     /// A buffer from a pool of `size` (recreated when the size changes, e.g.
