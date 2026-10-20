@@ -1,10 +1,12 @@
 // One WebSocket per tab to the realtime relay (server/realtime.js): chat,
-// reactions, poll votes and who is in the voice lounge. Frames are a few
-// hundred bytes and nothing polls — an idle chat costs one ping every 25s.
+// reactions, poll votes, who is in the voice lounge and the streamer's hold.
+// Frames are a few hundred bytes and nothing polls — an idle chat costs one
+// ping every 25s.
+import { authStore } from '../auth/session';
 import { createStore, readJSON, writeJSON } from '../lib/store';
 import { soundFX } from '../services/soundEffects';
 import { streamStore } from '../stream/controller';
-import { emitReaction, prefsStore } from '../ui/prefs';
+import { emitReaction, prefsStore, toast } from '../ui/prefs';
 import { relayUrl } from './relay';
 
 const MAX_MESSAGES = 150;
@@ -39,6 +41,10 @@ export const rtStore = createStore({
   online: 0, // devices in the room
   voice: [], // [{ id, name, host, mic, hand }]
   people: [], // one name per device in the room
+  // The streamer's "be right back": { since, note, skew } or null. skew is
+  // this device's clock minus the relay's, so the elapsed time is right
+  // whatever either clock says.
+  hold: null,
 });
 
 const set = rtStore.set;
@@ -55,6 +61,27 @@ function send(msg) {
   if (ws?.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify(msg));
   return true;
+}
+
+// The relay only takes a hold from the channel's signed-in owner, so the
+// session token rides along; without one viewers still see the card in the
+// video itself.
+function sendHold() {
+  const { holdNotice: notice, publish } = streamStore.get();
+  const { token } = authStore.get();
+  if (!token) return;
+  if (notice) send({ t: 'hold', on: true, elapsed: Date.now() - notice.since, note: notice.note, token });
+  // Ending the broadcast mid-hold is not "back on air".
+  else send({ t: 'hold', on: false, ended: !publish, token });
+}
+
+function setHold(hold, now, ended) {
+  const was = rtStore.get().hold;
+  set({ hold: hold ? { since: hold.since, note: hold.note || '', skew: Date.now() - now } : null });
+  if (was && !hold && !ended && streamStore.get().role === 'viewer') {
+    toast('عاد البث المباشر');
+    soundFX.playRoyalChime();
+  }
 }
 
 function connect() {
@@ -106,7 +133,17 @@ function receive(msg) {
     case 'init':
       retries = 0;
       myId = msg.you;
-      set({ status: 'open', you: msg.you, messages: msg.messages, votes: msg.votes, myVote: msg.myVote });
+      set({
+        status: 'open',
+        you: msg.you,
+        messages: msg.messages,
+        votes: msg.votes,
+        myVote: msg.myVote,
+        // Older relays send no hold.
+        hold: msg.hold ? { since: msg.hold.since, note: msg.hold.note || '', skew: Date.now() - msg.now } : null,
+      });
+      // A streamer who reconnects mid-hold restores theirs.
+      if (streamStore.get().holdNotice) sendHold();
       openListeners.forEach((fn) => fn());
       break;
     case 'chat': {
@@ -138,6 +175,9 @@ function receive(msg) {
     case 'clear':
       set({ messages: [] });
       break;
+    case 'hold':
+      setHold(msg.hold, msg.now, msg.ended);
+      break;
   }
 }
 
@@ -156,12 +196,21 @@ export function startRealtime() {
     nameTimer = setTimeout(() => send({ t: 'name', name: username }), 600);
   });
 
-  let { role, config } = streamStore.get();
+  let { role, config, holdNotice } = streamStore.get();
+  let holdTimer = null;
   streamStore.subscribe(() => {
     const s = streamStore.get();
     if (s.role !== role) {
       role = s.role;
       send({ t: 'host', on: role === 'host' });
+    }
+    if (s.holdNotice !== holdNotice) {
+      // A start or end goes out at once; note edits settle first.
+      const edit = Boolean(s.holdNotice && holdNotice);
+      holdNotice = s.holdNotice;
+      clearTimeout(holdTimer);
+      if (edit) holdTimer = setTimeout(sendHold, 600);
+      else sendHold();
     }
     if (s.config !== config) {
       const moved = s.config.room !== config.room;

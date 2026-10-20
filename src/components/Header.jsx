@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, Link2, Radio, Server, Settings2, UserRound } from 'lucide-react';
 import { authStore } from '../auth/session';
 import { useStore } from '../lib/store';
+import { rtStore } from '../realtime/channel';
 import { inviteLink } from '../stream/config';
 import { streamStore } from '../stream/controller';
 import { soundFX } from '../services/soundEffects';
@@ -14,6 +15,8 @@ export default function Header({ onOpen }) {
   const status = useStore(streamStore, (s) => s.status);
   const latency = useStore(streamStore, (s) => s.stats?.latencyMs ?? null);
   const config = useStore(streamStore, (s) => s.config);
+  const hostHold = useStore(streamStore, (s) => Boolean(s.publish?.hold));
+  const viewerHold = useStore(rtStore, (s) => Boolean(s.hold));
   const account = useStore(authStore, (s) => s.name);
   const [copied, setCopied] = useState(false);
 
@@ -40,7 +43,7 @@ export default function Header({ onOpen }) {
       </div>
 
       <div className="topbar__status">
-        <StatusPill role={role} status={status} />
+        <StatusPill role={role} status={status} hold={role === 'host' ? hostHold : viewerHold} />
         {latency !== null && status === 'live' && <LatencyMeter ms={latency} />}
       </div>
 

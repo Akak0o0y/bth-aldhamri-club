@@ -1,4 +1,4 @@
-import { LoaderCircle, WifiOff } from 'lucide-react';
+import { LoaderCircle, Pause, WifiOff } from 'lucide-react';
 
 const STATUS = {
   idle: { label: 'جاهز', chip: '' },
@@ -10,17 +10,20 @@ const STATUS = {
   error: { label: 'خطأ في الاتصال', chip: 'chip--live' },
 };
 
-function statusLabel(role, status) {
+const HOLD = { label: 'استراحة', chip: 'chip--hold', icon: Pause };
+
+function statusLabel(role, status, hold) {
+  if (hold) return HOLD.label;
   if (role === 'host' && status === 'live') return 'على الهواء';
   return (STATUS[status] ?? STATUS.idle).label;
 }
 
-export function StatusText({ role, status }) {
-  return statusLabel(role, status);
+export function StatusText({ role, status, hold = false }) {
+  return statusLabel(role, status, hold);
 }
 
-export function StatusPill({ role, status }) {
-  const s = STATUS[status] ?? STATUS.idle;
+export function StatusPill({ role, status, hold = false }) {
+  const s = hold ? HOLD : STATUS[status] ?? STATUS.idle;
   const Icon = s.icon;
   return (
     <span className={`chip status-pill ${s.chip}`} role="status" aria-live="polite">
@@ -31,7 +34,7 @@ export function StatusPill({ role, status }) {
       ) : (
         <span className={`dot ${s.pulse ? 'dot--pulse' : ''}`} />
       )}
-      {statusLabel(role, status)}
+      {statusLabel(role, status, hold)}
     </span>
   );
 }

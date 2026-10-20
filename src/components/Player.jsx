@@ -24,9 +24,12 @@ import {
   Zap,
 } from 'lucide-react';
 import { useStore } from '../lib/store';
-import { setLowLatency, setPreviewHidden, streamStore } from '../stream/controller';
+import { useNow } from '../lib/useNow';
+import { rtStore } from '../realtime/channel';
+import { holdLive, resumeLive, setLowLatency, setPreviewHidden, streamStore } from '../stream/controller';
+import { formatElapsed } from '../stream/hold';
 import { soundFX } from '../services/soundEffects';
-import { emitReaction, prefsStore, reactionsStore, setPref } from '../ui/prefs';
+import { emitReaction, prefsStore, reactionsStore, setPref, toast } from '../ui/prefs';
 import { BrandMark } from './Brand';
 import StatsPanel from './StatsPanel';
 import RemoteControl from './RemoteControl';
@@ -53,6 +56,8 @@ export default function Player({ onOpen, controlBlocked = false }) {
   const muted = useStore(prefsStore, (s) => s.muted);
   const lowLatency = useStore(prefsStore, (s) => s.lowLatency);
   const theater = useStore(prefsStore, (s) => s.theater);
+  const hostHold = useStore(streamStore, (s) => s.publish?.hold ?? null);
+  const viewerHold = useStore(rtStore, (s) => s.hold);
 
   const rootRef = useRef(null);
   const videoRef = useRef(null);
@@ -68,7 +73,12 @@ export default function Player({ onOpen, controlBlocked = false }) {
   const [remoteActive, setRemoteActive] = useState(false);
 
   const isHost = role === 'host';
-  const hasVideo = Boolean(stream) && !(isHost && previewHidden);
+  // The hold card is cheap to show even when the live preview is hidden.
+  const hasVideo = Boolean(stream) && !(isHost && previewHidden && !hostHold);
+  // Viewers see the hold screen even while a new session (codec change) has
+  // them briefly disconnected.
+  const viewerHeld = !isHost && viewerHold;
+  const held = isHost ? Boolean(hostHold) : Boolean(viewerHeld);
   const showVideo = hasVideo && (isHost || status === 'live' || status === 'reconnecting');
   const silent = isHost || muted || blocked || volume === 0;
   const paused = pausedStream !== null && pausedStream === stream;
@@ -231,7 +241,11 @@ export default function Player({ onOpen, controlBlocked = false }) {
           onDoubleClick={remoteActive ? undefined : toggleFullscreen}
         />
 
-        {!showVideo && (
+        {viewerHeld && <HoldScreen hold={viewerHold} />}
+
+        {isHost && hostHold && <HostHoldBar since={hostHold.since} onOpen={onOpen} />}
+
+        {!showVideo && !viewerHeld && (
           <StageOverlay
             role={role}
             status={status}
@@ -262,7 +276,12 @@ export default function Player({ onOpen, controlBlocked = false }) {
 
         <div className="player__top">
           <div className="player__title">
-            {status === 'live' ? (
+            {held ? (
+              <span className="chip chip--hold">
+                <Pause size={12} />
+                استراحة
+              </span>
+            ) : status === 'live' ? (
               <span className="chip chip--live">
                 <span className="dot dot--pulse" />
                 {isHost ? 'على الهواء' : 'مباشر'}
@@ -325,6 +344,11 @@ export default function Player({ onOpen, controlBlocked = false }) {
           </div>
 
           <div className="controls__group">
+            {isHost && !hostHold && (
+              <Ctl label="استراحة — أوقف البث مؤقتاً" onClick={() => holdLive()}>
+                <Coffee size={19} />
+              </Ctl>
+            )}
             {!isHost && (
               <button
                 className={`latency-toggle ${lowLatency ? 'is-on' : ''}`}
@@ -377,6 +401,53 @@ function Reactions() {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+function HoldScreen({ hold }) {
+  const now = useNow();
+  return (
+    <div className="hold-screen" role="status">
+      <span className="hold-screen__icon">
+        <Coffee size={26} />
+      </span>
+      <h3>استراحة قصيرة</h3>
+      <p>{hold.note || 'المذيع أوقف البث مؤقتاً — نعود بعد قليل'}</p>
+      {/* since is on the relay's clock; skew maps this device's clock onto it. */}
+      <span className="chip num">متوقف منذ {formatElapsed(now - hold.skew - hold.since)}</span>
+      <p className="faint">ابقَ هنا — يعود البث تلقائياً بدون تحديث الصفحة.</p>
+    </div>
+  );
+}
+
+function HostHoldBar({ since, onOpen }) {
+  const now = useNow();
+  const [busy, setBusy] = useState(false);
+  const resume = async () => {
+    setBusy(true);
+    const result = await resumeLive();
+    setBusy(false);
+    if (result.ok) soundFX.playRoyalChime();
+    else if (result.error) toast(result.error, 'warn');
+  };
+  return (
+    <div className="hold-bar" role="status">
+      <span className="chip chip--hold">
+        <Pause size={13} />
+        استراحة · <span className="num">{formatElapsed(now - since)}</span>
+      </span>
+      <span className="hold-bar__text">المشاهدون يرون شاشة الاستراحة</span>
+      <div className="hold-bar__actions">
+        <button className="btn btn--sm" onClick={() => onOpen('studio')}>
+          <Settings2 size={15} />
+          <span>الإعدادات</span>
+        </button>
+        <button className="btn btn--sm btn--primary" onClick={resume} disabled={busy}>
+          {busy ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}
+          <span>متابعة البث</span>
+        </button>
+      </div>
     </div>
   );
 }

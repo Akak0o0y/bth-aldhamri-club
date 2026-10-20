@@ -1,5 +1,6 @@
 import { Cpu, Gauge, Signal } from 'lucide-react';
 import { useStore } from '../lib/store';
+import { rtStore } from '../realtime/channel';
 import { streamStore } from '../stream/controller';
 import { StatusText } from './Status';
 
@@ -17,6 +18,8 @@ export default function StreamBar() {
   const config = useStore(streamStore, (s) => s.config);
   const hwDecode = useStore(streamStore, (s) => s.hwDecode);
   const publish = useStore(streamStore, (s) => s.publish);
+  const viewerHold = useStore(rtStore, (s) => Boolean(s.hold));
+  const hold = role === 'host' ? Boolean(publish?.hold) : viewerHold;
 
   const res = resolutionLabel(stats);
   const hw = role === 'host' ? stats?.hw ?? null : hwDecode;
@@ -31,7 +34,7 @@ export default function StreamBar() {
           </span>
           <span className="streambar__sep" />
           <span>
-            <StatusText role={role} status={status} />
+            <StatusText role={role} status={status} hold={hold} />
           </span>
         </p>
       </div>

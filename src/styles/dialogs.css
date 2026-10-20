@@ -337,6 +337,14 @@ code {
   gap: 10px;
   font-size: 0.82rem;
 }
+.live-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.live-meta svg {
+  color: var(--accent-hi);
+}
 .live-stats .stats-panel {
   position: static;
   width: 100%;
@@ -600,5 +608,13 @@ code {
   .codec__hw {
     grid-column: 2;
     justify-self: start;
+  }
+  /* The key on its own line leaves the URL room to stay readable. */
+  .copy-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .copy-row__key {
+    width: 100%;
   }
 }

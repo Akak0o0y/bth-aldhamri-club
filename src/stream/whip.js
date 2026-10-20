@@ -17,6 +17,13 @@ export class WhipPublisher {
   #retryTimer = null;
   #stopped = true;
   #videoSender = null;
+  #audioSender = null;
+  // What is sent now. Hold swaps these without a new session; a reconnect
+  // picks up whatever is current.
+  #tracks;
+  // Whether the session negotiates audio. It stays fixed for the publisher's
+  // life so a held (silent) stream can get its mic back in place.
+  #hasAudio;
   #auth;
   #encodingQueue = Promise.resolve();
 
@@ -24,10 +31,30 @@ export class WhipPublisher {
   constructor(opts) {
     this.#opts = opts;
     this.#auth = authHeaders(opts);
+    this.#tracks = { video: opts.stream.getVideoTracks()[0] ?? null, audio: opts.stream.getAudioTracks()[0] ?? null };
+    this.#hasAudio = Boolean(this.#tracks.audio);
   }
 
   get pc() {
     return this.#pc;
+  }
+
+  get hasAudio() {
+    return this.#hasAudio;
+  }
+
+  // null sends nothing on that slot (silence / no new frames) and keeps it.
+  async replaceTracks({ video, audio }) {
+    const jobs = [];
+    if (video !== undefined) {
+      this.#tracks.video = video;
+      if (this.#videoSender) jobs.push(this.#videoSender.replaceTrack(video));
+    }
+    if (audio !== undefined) {
+      this.#tracks.audio = audio;
+      if (this.#audioSender) jobs.push(this.#audioSender.replaceTrack(audio));
+    }
+    await Promise.all(jobs);
   }
 
   start() {
@@ -73,7 +100,7 @@ export class WhipPublisher {
       fetch(this.#session, { method: 'DELETE', headers: this.#auth, keepalive: true }).catch(() => {});
       this.#session = null;
     }
-    this.#videoSender = null;
+    this.#videoSender = this.#audioSender = null;
     this.#pending = [];
   }
 
@@ -104,26 +131,24 @@ export class WhipPublisher {
     const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
     this.#pc = pc;
 
-    const [video] = o.stream.getVideoTracks();
-    const [audio] = o.stream.getAudioTracks();
-    if (video) {
-      // 'detail' keeps text razor sharp, 'motion' keeps games fluid.
-      video.contentHint = o.contentHint;
-      const t = pc.addTransceiver(video, {
-        direction: 'sendonly',
-        streams: [o.stream],
-        sendEncodings: [{ maxBitrate: o.videoKbps * 1000, maxFramerate: o.fps, priority: 'high', networkPriority: 'high' }],
-      });
-      preferCodec(t, o.codecId);
-      this.#videoSender = t.sender;
-    }
-    if (audio) {
-      audio.contentHint = o.music ? 'music' : 'speech';
-      pc.addTransceiver(audio, {
+    const { video, audio } = this.#tracks;
+    // 'detail' keeps text razor sharp, 'motion' keeps games fluid.
+    if (video) video.contentHint = o.contentHint;
+    const videoT = pc.addTransceiver(video ?? 'video', {
+      direction: 'sendonly',
+      streams: [o.stream],
+      sendEncodings: [{ maxBitrate: o.videoKbps * 1000, maxFramerate: o.fps, priority: 'high', networkPriority: 'high' }],
+    });
+    preferCodec(videoT, o.codecId);
+    this.#videoSender = videoT.sender;
+    if (this.#hasAudio) {
+      if (audio) audio.contentHint = o.music ? 'music' : 'speech';
+      const t = pc.addTransceiver(audio ?? 'audio', {
         direction: 'sendonly',
         streams: [o.stream],
         sendEncodings: [{ maxBitrate: o.audioKbps * 1000, priority: 'high', networkPriority: 'high' }],
       });
+      this.#audioSender = t.sender;
     }
 
     pc.onicecandidate = (e) => {

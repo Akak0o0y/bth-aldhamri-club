@@ -3,62 +3,74 @@ import {
   Camera,
   Check,
   CircleStop,
-  Clapperboard,
+  Clock,
   Copy,
   Cpu,
   Eye,
   EyeOff,
-  FileText,
-  Gamepad2,
   Link2,
   LoaderCircle,
+  Mic,
+  MicOff,
   Monitor,
+  Pause,
+  Play,
   Radio,
+  Server,
+  Smartphone,
+  SwitchCamera,
+  Users,
   Zap,
 } from 'lucide-react';
 import { authStore } from '../auth/session';
 import { useStore } from '../lib/store';
-import { pickAutoCodec, probeEncoders, VIDEO_CODECS } from '../stream/codecs';
+import { useNow } from '../lib/useNow';
+import { rtStore } from '../realtime/channel';
+import { perViewerMbps, REFERENCE_SERVER_MBPS, viewerCapacity } from '../stream/capacity';
 import { inviteLink, whipUrl } from '../stream/config';
 import { checkDevice } from '../stream/deviceCheck';
+import { formatElapsed } from '../stream/hold';
 import { assessQuality } from '../stream/quality';
 import {
   goLive,
+  holdLive,
   PRESETS,
-  presetKbps,
+  resumeLive,
+  setHoldNote,
   setLiveBitrate,
+  setMic,
   setPreviewHidden,
   stopLive,
   stopViewing,
   startViewing,
   streamStore,
+  switchCamera,
 } from '../stream/controller';
 import { soundFX } from '../services/soundEffects';
 import { toast } from '../ui/prefs';
 import Dialog from './Dialog';
+import QualityFields from './QualityFields';
+import { audioKbpsFor, SOURCES, useQualityDraft } from './qualityDraft';
 import StatsPanel from './StatsPanel';
 import { StatusPill } from './Status';
-
-const SOURCES = [
-  { id: 'screen', label: 'الشاشة أو لعبة', icon: Monitor },
-  { id: 'camera', label: 'الكاميرا والمايك', icon: Camera },
-  { id: 'test', label: 'بث تجريبي', icon: Clapperboard },
-];
 
 export default function StudioDialog({ onClose, onOpen }) {
   const role = useStore(streamStore, (s) => s.role);
   const status = useStore(streamStore, (s) => s.status);
+  const held = useStore(streamStore, (s) => Boolean(s.publish?.hold));
   const isHost = role === 'host';
   const subtitle = !isHost
     ? 'بث من المتصفح مع قياس الدقة والإطارات الفعلية'
-    : status === 'live'
-      ? 'أنت على الهواء الآن'
-      : 'المعاينة تعمل — بانتظار الاتصال بالسيرفر';
+    : held
+      ? 'المشاهدون يرون شاشة الاستراحة — عدّل ما تريد ثم تابع'
+      : status === 'live'
+        ? 'أنت على الهواء الآن'
+        : 'المعاينة تعمل — بانتظار الاتصال بالسيرفر';
   return (
     <Dialog
-      title={isHost ? 'لوحة البث' : 'ابدأ البث'}
+      title={!isHost ? 'ابدأ البث' : held ? 'البث في استراحة' : 'لوحة البث'}
       subtitle={subtitle}
-      icon={Radio}
+      icon={held ? Pause : Radio}
       size="lg"
       onClose={onClose}
     >
@@ -82,19 +94,21 @@ function useCopy() {
   return [copied, copy];
 }
 
+// A streamer always broadcasts to their own channel (see goLive).
+function useWhip() {
+  const config = useStore(streamStore, (s) => s.config);
+  const myRoom = useStore(authStore, (s) => s.room);
+  return whipUrl({ ...config, room: myRoom || config.room });
+}
+
 function SetupPanel({ onClose, onOpen }) {
   const config = useStore(streamStore, (s) => s.config);
   const account = useStore(authStore, (s) => s.name);
   const myRoom = useStore(authStore, (s) => s.room);
   const canPublish = Boolean(account || config.publishUser);
   const [tab, setTab] = useState('browser');
-  const [source, setSource] = useState('screen');
-  const [contentHint, setContentHint] = useState('motion');
-  const [presetId, setPresetId] = useState('1440');
-  const [fps, setFps] = useState(60);
-  const [codec, setCodec] = useState('auto');
-  const [override, setOverride] = useState(null); // { key, kbps } — user-dragged bitrate
-  const [probeState, setProbeState] = useState(null);
+  const draft = useQualityDraft();
+  const { preset, fps, codecId, bitrate, selectedProbe } = draft;
   const [checkProgress, setCheckProgress] = useState(null);
   const [checkResult, setCheckResult] = useState(null);
   const checkRef = useRef(null);
@@ -102,45 +116,15 @@ function SetupPanel({ onClose, onOpen }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, copy] = useCopy();
-
-  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[1];
-  const probeKey = `${preset.id}|${fps}|${override?.key ?? ''}|${override?.kbps ?? ''}`;
-  const probes = probeState?.key === probeKey ? probeState.probes : null;
-  const autoCodec = probes ? pickAutoCodec(probes) : 'h264';
-  const codecId = codec === 'auto' ? autoCodec : codec;
-  const autoProbe = probes?.find((p) => p.id === autoCodec);
-
-  // Probe the selected workload, including codec-specific bitrate. No CPU-count
-  // guess and no stale 1080p result shown beside a 1440p/4K selection.
-  useEffect(() => {
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      const codecKbps = Object.fromEntries(VIDEO_CODECS.map((c) => [c.id,
-        override?.key === `${preset.id}|${c.id}|${fps}` ? override.kbps : presetKbps(preset, c.id, fps),
-      ]));
-      probeEncoders({ width: preset.width, height: preset.height, fps, codecKbps }).then((p) => {
-        if (!cancelled) setProbeState({ key: probeKey, probes: p });
-      });
-    }, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [preset, fps, override, probeKey]);
+  const whip = useWhip();
 
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; checkRef.current?.abort(); };
   }, []);
 
-  // The suggested bitrate follows the picture until the user drags the slider.
-  const bitrateKey = `${preset.id}|${codecId}|${fps}`;
-  const bitrate = override?.key === bitrateKey ? override.kbps : presetKbps(preset, codecId, fps);
-  const audioKbps = source === 'screen' ? 128 : source === 'camera' ? 64 : 0;
-  const uploadMbps = ((bitrate + audioKbps) * 1.5) / 1000;
   const checking = checkProgress !== null;
-  const selectedProbe = probes?.find((p) => p.id === codecId);
-  const checkKey = `${bitrateKey}|${bitrate}`;
+  const checkKey = `${draft.bitrateKey}|${bitrate}`;
   const result = checkResult?.key === checkKey ? checkResult.result : null;
 
   const runCheck = async () => {
@@ -169,21 +153,11 @@ function SetupPanel({ onClose, onOpen }) {
     setBusy(true);
     setError('');
     soundFX.playRoyalChime();
-    const result = await goLive({
-      source,
-      preset,
-      fps,
-      codecId,
-      contentHint: source === 'screen' ? contentHint : 'motion',
-      kbps: bitrate,
-    });
+    const result = await goLive(draft.settings);
     setBusy(false);
     if (result.ok) onClose();
     else setError(result.error);
   };
-
-  // A streamer always broadcasts to their own channel (see goLive).
-  const whip = whipUrl({ ...config, room: myRoom || config.room });
 
   return (
     <>
@@ -196,169 +170,76 @@ function SetupPanel({ onClose, onOpen }) {
           <Zap size={16} />
           OBS Studio
         </button>
+        <button className="seg__opt" role="tab" aria-selected={tab === 'phone'} onClick={() => setTab('phone')} disabled={checking}>
+          <Smartphone size={16} />
+          شاشة الجوال
+        </button>
       </div>
 
-      {tab === 'browser' ? (
+      {tab === 'browser' && (
         <div className="studio">
-          <section className="studio__block">
-            <span className="label">المصدر</span>
-            <div className="seg seg--wrap">
-              {SOURCES.map(({ id, label, icon: Icon }) => (
-                <button key={id} className="seg__opt" aria-pressed={source === id} onClick={() => setSource(id)}>
-                  <Icon size={16} />
-                  {label}
-                </button>
-              ))}
-            </div>
-          </section>
+          <QualityFields draft={draft} screenGuide={<PhoneScreenGuide whip={whip} account={account} onCamera={() => draft.setSource('camera')} />} />
 
-          {source === 'screen' && (
-            <section className="studio__block">
-              <span className="label">نوع المحتوى</span>
-              <div className="seg">
-                <button className="seg__opt" aria-pressed={contentHint === 'motion'} onClick={() => setContentHint('motion')}>
-                  <Gamepad2 size={16} />
-                  ألعاب وأفلام — سلاسة الحركة
+          {!draft.blocked && (
+            <>
+              <section className="studio__block">
+                <span className="label">فحص الجهاز والألوان</span>
+                <p className="hint">فحص محلي لمدة 20 ثانية للترميز وفك الترميز على الجهاز نفسه. أبقِ التبويب ظاهراً. يستخدم لوحة ألوان وحركة تجريبية ولا يختبر سرعة الإنترنت أو أداء اللعبة.</p>
+                <button className="btn btn--block" disabled={checking || busy || !draft.probes || selectedProbe?.supported === false} onClick={runCheck}>
+                  {checking ? <LoaderCircle size={16} className="spin" /> : <Cpu size={16} />}
+                  {checking ? `جارٍ فحص الجهاز… ${checkProgress}%` : `اختبار ${preset.label} / ${fps} على هذا الجهاز`}
                 </button>
-                <button className="seg__opt" aria-pressed={contentHint === 'detail'} onClick={() => setContentHint('detail')}>
-                  <FileText size={16} />
-                  شاشة ونصوص — حدة التفاصيل
-                </button>
-              </div>
-              <p className="hint">
-                {contentHint === 'motion'
-                  ? 'نفضّل سلاسة الحركة؛ قد تنخفض الدقة أو الإطارات إذا لم يكفِ الجهاز أو الاتصال.'
-                  : 'نفضّل التفاصيل؛ قد تنخفض الإطارات عند ضغط الجهاز أو الاتصال.'}
-              </p>
-            </section>
-          )}
+                {checking && <button className="link-btn" onClick={() => checkRef.current?.abort()}>إلغاء الفحص</button>}
+                {result && (
+                  <div role="status" className={result.passed ? 'hint' : 'settings-warn'}>
+                    <strong>{result.passed ? 'حافظ الجهاز على الهدف في الفحص المحلي.' : 'لم نثبت ثبات الهدف في الفحص المحلي.'}</strong>
+                    <p>أقل إطارات مقاسة: المصدر {result.captureFps ?? '—'} · الإرسال {result.sentFps ?? '—'} · الاستقبال {result.receivedFps ?? '—'} fps.</p>
+                    <p>الدقة المستقبلة: {result.width ?? '—'}×{result.height ?? '—'} · {result.codec ?? '—'} · {result.hw === true ? 'ترميز بالعتاد' : result.hw === false ? 'ترميز برمجي' : 'نوع المرمّز غير معلن'}.</p>
+                    <p>متوسط فرق عينات الألوان SDR: {result.colorError ?? '—'} / 255؛ الأقل أقرب للمصدر. هذا فحص عينات وليس معايرة للشاشة أو إثباتاً لألوان HDR.</p>
+                  </div>
+                )}
+                <p className="hint">نرسل ألوان المصدر كما يلتقطها المتصفح. إذا ظهرت باهتة، قارن لوحة الألوان من «بث تجريبي». يحتاج HDR إلى توافق الالتقاط والترميز وشاشة المشاهد؛ زيادة التشبع لا تصلح اختلاف النطاق.</p>
+              </section>
 
-          <section className="studio__block">
-            <div className="studio__row">
-              <span className="label">الدقة</span>
-              <div className="seg seg--compact" aria-label="معدل الإطارات">
-                {[60, 30].map((f) => (
-                  <button key={f} className="seg__opt" aria-pressed={fps === f} onClick={() => setFps(f)}>
-                    <span className="num">{f}</span> إطار
+              <footer className="studio__foot">
+                <div className="studio__target">
+                  <span className="faint">يرسل إلى</span>
+                  <span className="mono">{whip}</span>
+                  <button className="link-btn" onClick={() => onOpen('settings')}>
+                    تغيير
                   </button>
-                ))}
-              </div>
-            </div>
-            <div className="presets">
-              {PRESETS.map((p) => (
-                <button key={p.id} className="preset" aria-pressed={preset.id === p.id} onClick={() => setPresetId(p.id)}>
-                  {p.id === '1440' && <span className="preset__badge">جودة عالية</span>}
-                  <strong className="num">{p.label}</strong>
-                  <span>{p.name}</span>
-                  <small className="num">≈ {(presetKbps(p, codecId, fps) / 1000).toFixed(1)} Mbps</small>
+                </div>
+                {canPublish ? (
+                  account && (
+                    <p className="hint">
+                      تبث باسم {account} في قناتك <span className="mono">{myRoom}</span>
+                    </p>
+                  )
+                ) : (
+                  <p className="settings-warn">
+                    البث لأصحاب الحسابات.{' '}
+                    <button className="link-btn" onClick={() => onOpen('account')}>
+                      سجّل الدخول
+                    </button>{' '}
+                    أو اطلب رابط دعوة من مذيع.
+                  </p>
+                )}
+                {error && (
+                  <p className="studio__error" role="alert">
+                    {error}
+                  </p>
+                )}
+                <button className="btn btn--primary btn--lg btn--block" onClick={start} disabled={busy || checking || selectedProbe?.supported === false}>
+                  {busy ? <LoaderCircle size={18} className="spin" /> : <Radio size={18} />}
+                  <span>{busy ? 'جارٍ التجهيز…' : 'ابدأ البث الآن'}</span>
                 </button>
-              ))}
-            </div>
-            <p className="hint">الهدف {preset.width}×{preset.height} عند {fps} إطار. اختر مصدراً بهذه الدقة؛ فيديو 30 إطار لا يتحول إلى حركة 60 إطار بتكراره.</p>
-          </section>
-
-          <section className="studio__block">
-            <span className="label">الكودك</span>
-            <div className="codecs">
-              <button className="codec" aria-pressed={codec === 'auto'} onClick={() => setCodec('auto')}>
-                <span className="codec__name">تلقائي</span>
-                <span className="codec__note">{probes ? `${autoProbe?.label ?? 'H.264'} — حسب قدرات المتصفح` : 'جارٍ فحص الجودة المحددة…'}</span>
-                {probes ? <HwBadge hw={autoProbe?.hw} /> : <LoaderCircle size={14} className="spin" />}
-              </button>
-              {(probes ?? VIDEO_CODECS).map((c) => (
-                <button
-                  key={c.id}
-                  className="codec"
-                  aria-pressed={codec === c.id}
-                  disabled={probes ? !c.supported : false}
-                  onClick={() => setCodec(c.id)}
-                >
-                  <span className="codec__name num">{c.label}</span>
-                  <span className="codec__note">{c.supported === false ? 'غير مدعوم في هذا المتصفح' : c.note}</span>
-                  {probes && c.supported && <HwBadge hw={c.hw} />}
-                </button>
-              ))}
-            </div>
-            {selectedProbe?.smooth === false && <p className="settings-warn">المتصفح يتوقع صعوبة في هذه الجودة. شغّل فحص الجهاز قبل البث.</p>}
-          </section>
-
-          <section className="studio__block">
-            <div className="studio__row">
-              <label className="label" htmlFor="studio-bitrate">
-                معدل البت
-              </label>
-              <span className="chip chip--accent num">{(bitrate / 1000).toFixed(1)} Mbps</span>
-            </div>
-            <input
-              id="studio-bitrate"
-              type="range"
-              className="range"
-              min="1000"
-              max="30000"
-              step="500"
-              value={bitrate}
-              style={{ '--pct': `${((bitrate - 1000) / 29000) * 100}%` }}
-              onChange={(e) => setOverride({ key: bitrateKey, kbps: Number(e.target.value) })}
-            />
-            <p className="hint">
-              نوصي بسرعة رفع مستقرة ≈ <b className="num">{uploadMbps.toFixed(1)} Mbps</b> مع هامش للاتصال. معدل البت سقف؛ المتصفح يضبط الإرسال حسب المشهد والشبكة.
-            </p>
-          </section>
-
-          <section className="studio__block">
-            <span className="label">فحص الجهاز والألوان</span>
-            <p className="hint">فحص محلي لمدة 20 ثانية للترميز وفك الترميز على الجهاز نفسه. أبقِ التبويب ظاهراً. يستخدم لوحة ألوان وحركة تجريبية ولا يختبر سرعة الإنترنت أو أداء اللعبة.</p>
-            <button className="btn btn--block" disabled={checking || busy || !probes || selectedProbe?.supported === false} onClick={runCheck}>
-              {checking ? <LoaderCircle size={16} className="spin" /> : <Cpu size={16} />}
-              {checking ? `جارٍ فحص الجهاز… ${checkProgress}%` : `اختبار ${preset.label} / ${fps} على هذا الجهاز`}
-            </button>
-            {checking && <button className="link-btn" onClick={() => checkRef.current?.abort()}>إلغاء الفحص</button>}
-            {result && (
-              <div role="status" className={result.passed ? 'hint' : 'settings-warn'}>
-                <strong>{result.passed ? 'حافظ الجهاز على الهدف في الفحص المحلي.' : 'لم نثبت ثبات الهدف في الفحص المحلي.'}</strong>
-                <p>أقل إطارات مقاسة: المصدر {result.captureFps ?? '—'} · الإرسال {result.sentFps ?? '—'} · الاستقبال {result.receivedFps ?? '—'} fps.</p>
-                <p>الدقة المستقبلة: {result.width ?? '—'}×{result.height ?? '—'} · {result.codec ?? '—'} · {result.hw === true ? 'ترميز بالعتاد' : result.hw === false ? 'ترميز برمجي' : 'نوع المرمّز غير معلن'}.</p>
-                <p>متوسط فرق عينات الألوان SDR: {result.colorError ?? '—'} / 255؛ الأقل أقرب للمصدر. هذا فحص عينات وليس معايرة للشاشة أو إثباتاً لألوان HDR.</p>
-              </div>
-            )}
-            <p className="hint">نرسل ألوان المصدر كما يلتقطها المتصفح. إذا ظهرت باهتة، قارن لوحة الألوان من «بث تجريبي». يحتاج HDR إلى توافق الالتقاط والترميز وشاشة المشاهد؛ زيادة التشبع لا تصلح اختلاف النطاق.</p>
-          </section>
-
-          <footer className="studio__foot">
-            <div className="studio__target">
-              <span className="faint">يرسل إلى</span>
-              <span className="mono">{whip}</span>
-              <button className="link-btn" onClick={() => onOpen('settings')}>
-                تغيير
-              </button>
-            </div>
-            {canPublish ? (
-              account && (
-                <p className="hint">
-                  تبث باسم {account} في قناتك <span className="mono">{myRoom}</span>
-                </p>
-              )
-            ) : (
-              <p className="settings-warn">
-                البث لأصحاب الحسابات.{' '}
-                <button className="link-btn" onClick={() => onOpen('account')}>
-                  سجّل الدخول
-                </button>{' '}
-                أو اطلب رابط دعوة من مذيع.
-              </p>
-            )}
-            {error && (
-              <p className="studio__error" role="alert">
-                {error}
-              </p>
-            )}
-            <button className="btn btn--primary btn--lg btn--block" onClick={start} disabled={busy || checking || selectedProbe?.supported === false}>
-              {busy ? <LoaderCircle size={18} className="spin" /> : <Radio size={18} />}
-              <span>{busy ? 'جارٍ التجهيز…' : 'ابدأ البث الآن'}</span>
-            </button>
-          </footer>
+              </footer>
+            </>
+          )}
         </div>
-      ) : (
+      )}
+
+      {tab === 'obs' && (
         <div className="studio">
           <p className="studio__lead">
             OBS 30 وأحدث يبث بـ <b>WHIP</b> مباشرة: ترميز بكرت الشاشة (NVENC / AMF / QuickSync) وتأخير أقل من نصف ثانية.
@@ -412,21 +293,73 @@ function SetupPanel({ onClose, onOpen }) {
           </section>
         </div>
       )}
+
+      {tab === 'phone' && (
+        <div className="studio">
+          <PhoneScreenGuide whip={whip} account={account} />
+        </div>
+      )}
     </>
   );
 }
 
-function HwBadge({ hw }) {
-  if (hw === true) {
-    return (
-      <span className="chip chip--good codec__hw">
-        <Cpu size={12} />
-        مرجّح بالعتاد
-      </span>
-    );
-  }
-  if (hw === false) return <span className="chip codec__hw">قد يستهلك موارد أكثر</span>;
-  return null;
+// No iPad or iPhone browser can capture the screen (WebKit has no
+// getDisplayMedia there). These routes reach the same channel and viewers.
+function PhoneScreenGuide({ whip, account, onCamera }) {
+  const [copied, copy] = useCopy();
+  return (
+    <>
+      <p className="studio__lead">
+        أبل لا تسمح لأي متصفح على <b>الآيباد أو الآيفون</b> بمشاركة الشاشة، وهذا ليس خللاً في الموقع. هذه الطرق تبث شاشة الجهاز إلى قناتك نفسها، ويشاهدها جمهورك هنا كالعادة:
+      </p>
+      <section className="studio__block">
+        <span className="label">١ · من الجهاز نفسه — تطبيق Larix Screencaster</span>
+        <ol className="obs-list">
+          <li>ثبّت <b>Larix Screencaster</b> من App Store.</li>
+          <li>أضف اتصالاً جديداً (<b>Connections</b> ← <b>+</b>) والصق رابط WHIP، وضع الرمز في خانة <b>Token</b> للتوثيق.</li>
+        </ol>
+        <div className="copy-row">
+          <span className="copy-row__key">WHIP URL</span>
+          <span className="mono copy-row__val">{whip}</span>
+          <button className="btn btn--sm" onClick={() => copy('whip', whip)}>
+            {copied === 'whip' ? <Check size={15} /> : <Copy size={15} />}
+            {copied === 'whip' ? 'تم' : 'نسخ'}
+          </button>
+        </div>
+        <div className="copy-row">
+          <span className="copy-row__key">Token</span>
+          <span className="mono copy-row__val">{account || 'اسم-حسابك'}:كلمة-المرور</span>
+        </div>
+        <ol className="obs-list" start={3}>
+          <li>الإعدادات: <code>H.264</code> · <code>1080p</code> أو <code>720p</code> · <code>30 fps</code>. ‏HEVC لا يعمل عند كل المشاهدين.</li>
+          <li>افتح <b>مركز التحكم</b>، اضغط مطولاً على زر <b>تسجيل الشاشة</b>، اختر <b>Larix Screencaster</b> ثم <b>بدء البث</b>.</li>
+        </ol>
+        <p className="hint">النسخة المجانية من Larix تتوقف بعد 5 دقائق؛ الاشتراك يزيل الحد. يصل صوت اللعبة فقط إذا كانت تدعم ReplayKit، وإلا يصل صوت المايك. جرّبه قبل بث مهم.</p>
+      </section>
+      <section className="studio__block">
+        <span className="label">٢ · انعكاس الشاشة (AirPlay) إلى لابتوب</span>
+        <ul className="obs-list">
+          <li><b>ماك:</b> فعّل <b>AirPlay Receiver</b> من إعدادات النظام، ثم من الآيباد: مركز التحكم ← <b>انعكاس الشاشة</b> ← اختر الماك.</li>
+          <li><b>ويندوز:</b> ثبّت مستقبل AirPlay مثل <b>AirServer</b> أو <b>UxPlay</b> ثم اختره من «انعكاس الشاشة».</li>
+          <li>من اللابتوب افتح هذا الموقع ← ابدأ البث ← <b>الشاشة أو لعبة</b> ← اختر نافذة الانعكاس، أو استخدم أداة <code>dhamri</code>.</li>
+        </ul>
+      </section>
+      <section className="studio__block">
+        <span className="label">٣ · كابل وكرت التقاط — أوضح صورة وأقل تأخير</span>
+        <ul className="obs-list">
+          <li>وصّل الآيباد بمحول <code>USB-C ← HDMI</code> (أو Lightning ← HDMI للأجهزة الأقدم) ثم بكرت التقاط HDMI في اللابتوب.</li>
+          <li>كرت الالتقاط يظهر ككاميرا: اختر <b>الكاميرا والمايك</b> في الموقع على اللابتوب.</li>
+        </ul>
+      </section>
+      <p className="hint">البث إلى التلفزيون (AirPlay أو Chromecast) يعرض الشاشة على التلفزيون فقط، ولا يصل إلى مشاهدي الموقع.</p>
+      {onCamera && (
+        <button className="btn btn--block" onClick={onCamera}>
+          <Camera size={16} />
+          ابث بكاميرا هذا الجهاز بدلاً من ذلك
+        </button>
+      )}
+    </>
+  );
 }
 
 function LivePanel({ onClose }) {
@@ -436,6 +369,9 @@ function LivePanel({ onClose }) {
   const stats = useStore(streamStore, (s) => s.stats);
   const previewHidden = useStore(streamStore, (s) => s.previewHidden);
   const config = useStore(streamStore, (s) => s.config);
+  // Devices in the channel, the streamer's own included.
+  const online = useStore(rtStore, (s) => s.online);
+  const now = useNow();
   const [draft, setDraft] = useState(null);
   const [copied, copy] = useCopy();
   const commitTimer = useRef(0);
@@ -443,9 +379,13 @@ function LivePanel({ onClose }) {
   useEffect(() => () => clearTimeout(commitTimer.current), []);
 
   if (!publish) return null;
+  if (publish.hold) return <HoldPanel onClose={onClose} />;
   const preset = PRESETS.find((p) => p.id === publish.presetId);
   const kbps = draft ?? publish.requestedKbps;
   const quality = assessQuality(stats, publish);
+  const watching = Math.max(0, online - 1);
+  const audioKbps = audioKbpsFor(publish.source);
+  const each = perViewerMbps(publish.kbps, audioKbps);
 
   const onBitrate = (value) => {
     setDraft(value);
@@ -463,6 +403,20 @@ function LivePanel({ onClose }) {
         <span className="faint">
           {SOURCES.find((s) => s.id === publish.source)?.label} · <span className="num">{preset?.label}</span> ·{' '}
           <span className="num">{publish.fps}</span> إطار · {publish.codecLabel}
+        </span>
+      </div>
+      <div className="live-meta">
+        <span className="chip" title="مدة البث">
+          <Clock size={13} />
+          على الهواء <span className="num">{formatElapsed(now - publish.startedAt)}</span>
+        </span>
+        <span className="chip" title="الأجهزة المفتوحة على قناتك الآن">
+          <Users size={13} />
+          <span className="num">{watching}</span> يشاهدون
+        </span>
+        <span className="chip" title={`كل مشاهد ≈ ${each.toFixed(1)} Mbps من السيرفر`}>
+          <Server size={13} />
+          السيرفر يرسل ≈ <span className="num">{Math.round(watching * each)}</span> Mbps
         </span>
       </div>
       {message && status !== 'live' && <p className="studio__error">{message}</p>}
@@ -492,9 +446,30 @@ function LivePanel({ onClose }) {
           onChange={(e) => onBitrate(Number(e.target.value))}
         />
         <p className="hint">السقف المطبّق: {(publish.kbps / 1000).toFixed(1)} Mbps. ينخفض عند ازدحام مستمر ويعود تدريجياً عند تحسن الشبكة.</p>
+        <p className="hint">
+          بهذا المعدل يخدم سيرفر <span className="num">{REFERENCE_SERVER_MBPS / 1000}</span> Gbps نحو{' '}
+          <b className="num">{viewerCapacity(REFERENCE_SERVER_MBPS, publish.kbps, audioKbps)}</b> مشاهد. لتغيير الدقة أو الكودك أو المصدر خذ استراحة وعدّل ثم تابع.
+        </p>
       </section>
 
+      <button className="btn btn--lg btn--block" onClick={() => holdLive()}>
+        <Pause size={18} />
+        استراحة — أوقف البث مؤقتاً وعدّل الإعدادات
+      </button>
+
       <div className="live-actions">
+        {publish.hasAudio && (
+          <button className="btn" aria-pressed={!publish.micOn} onClick={() => setMic(!publish.micOn)}>
+            {publish.micOn ? <MicOff size={16} /> : <Mic size={16} />}
+            {publish.micOn ? 'كتم الصوت' : 'تشغيل الصوت'}
+          </button>
+        )}
+        {publish.source === 'camera' && (
+          <button className="btn" onClick={() => switchCamera()}>
+            <SwitchCamera size={16} />
+            {publish.facing === 'environment' ? 'الكاميرا الأمامية' : 'الكاميرا الخلفية'}
+          </button>
+        )}
         <button className="btn" onClick={() => setPreviewHidden(!previewHidden)}>
           {previewHidden ? <Eye size={16} /> : <EyeOff size={16} />}
           {previewHidden ? 'إظهار المعاينة' : 'إخفاء المعاينة لتوفير الموارد'}
@@ -507,6 +482,95 @@ function LivePanel({ onClose }) {
 
       <button
         className="btn btn--live btn--lg btn--block"
+        onClick={() => {
+          stopLive();
+          onClose();
+        }}
+      >
+        <CircleStop size={18} />
+        إنهاء البث
+      </button>
+    </div>
+  );
+}
+
+// While held: viewers see the card; the streamer writes them a note and may
+// change any setting before continuing.
+function HoldPanel({ onClose }) {
+  const publish = useStore(streamStore, (s) => s.publish);
+  const account = useStore(authStore, (s) => s.name);
+  const now = useNow();
+  const whip = useWhip();
+  const draft = useQualityDraft({
+    source: publish.source,
+    presetId: publish.presetId,
+    fps: publish.fps,
+    codec: publish.codecId,
+    contentHint: publish.contentHint,
+    facing: publish.facing,
+    override: { key: `${publish.presetId}|${publish.codecId}|${publish.fps}`, kbps: publish.requestedKbps },
+  });
+  const [note, setNote] = useState(publish.hold.note);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const codecChanged = draft.codecId !== publish.codecId;
+
+  const resume = async () => {
+    setBusy(true);
+    setError('');
+    const result = await resumeLive(draft.settings);
+    setBusy(false);
+    if (result.ok) {
+      soundFX.playRoyalChime();
+      onClose();
+    } else if (result.error) {
+      setError(result.error);
+    }
+  };
+
+  return (
+    <div className="studio">
+      <div className="live-head">
+        <span className="chip chip--hold">
+          <Pause size={13} />
+          استراحة · <span className="num">{formatElapsed(now - publish.hold.since)}</span>
+        </span>
+        <span className="faint">المشاهدون ما زالوا متصلين ويرون شاشة الاستراحة بدون صوت. الكاميرا والمايك مغلقان.</span>
+      </div>
+
+      <section className="studio__block">
+        <label className="label" htmlFor="hold-note">
+          رسالة للمشاهدين
+        </label>
+        <input
+          id="hold-note"
+          className="field"
+          maxLength={80}
+          value={note}
+          placeholder="نعود بعد قليل — ابقَ معنا"
+          onChange={(e) => {
+            setNote(e.target.value);
+            setHoldNote(e.target.value);
+          }}
+        />
+        <p className="hint">تظهر على شاشة الاستراحة وعند المشاهدين فوراً.</p>
+      </section>
+
+      <QualityFields draft={draft} screenGuide={<PhoneScreenGuide whip={whip} account={account} onCamera={() => draft.setSource('camera')} />} />
+
+      {codecChanged && <p className="settings-warn">تغيير الكودك يفتح اتصالاً جديداً؛ يعود المشاهدون إليه تلقائياً خلال ثوانٍ.</p>}
+      {error && (
+        <p className="studio__error" role="alert">
+          {error}
+        </p>
+      )}
+
+      <button className="btn btn--primary btn--lg btn--block" onClick={resume} disabled={busy || draft.blocked || draft.selectedProbe?.supported === false}>
+        {busy ? <LoaderCircle size={18} className="spin" /> : <Play size={18} />}
+        <span>{busy ? 'جارٍ المتابعة…' : 'متابعة البث'}</span>
+      </button>
+      <button
+        className="btn btn--live btn--block"
         onClick={() => {
           stopLive();
           onClose();

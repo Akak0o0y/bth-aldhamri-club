@@ -386,6 +386,15 @@ a:hover {
 .chip--live .dot {
   color: var(--live);
 }
+/* On hold: calm and neutral, never the live red. */
+.chip--hold {
+  color: var(--text);
+  border-color: rgb(211 216 228 / 0.28);
+  background: rgb(211 216 228 / 0.08);
+}
+.chip--hold svg {
+  color: var(--mid);
+}
 
 .dot {
   position: relative;

@@ -1,5 +1,5 @@
-// Realtime relay for مجلس ظمرة: chat, reactions, poll votes and the voice
-// roster, per room. Everything lives in memory (the last 150 messages are all
+// Realtime relay for مجلس ظمرة: chat, reactions, poll votes, the voice
+// roster and the streamer's hold, per room. Everything lives in memory (the last 150 messages are all
 // the history a live majlis needs), so the process idles at a few MB with no
 // database. Voice audio itself never touches this server — speakers publish
 // to MediaMTX over WHIP and listeners pull over WHEP; we only say who's on.
@@ -37,6 +37,10 @@ const ORIGINS = (process.env.ALLOWED_ORIGINS || '')
 const MAX_MESSAGES = 150;
 const MAX_ROOMS = 200;
 const ROOM_TTL = 6 * 60 * 60 * 1000; // keep an empty room's history for 6h
+const MAX_HOLD = 12 * 60 * 60 * 1000;
+// A streamer's socket drops when a phone locks or switches apps; keep their
+// hold that long before deciding they are gone.
+const HOLD_GRACE = 2 * 60 * 1000;
 const REACTIONS = new Set(['heart', 'fire', 'clap', 'star', 'coffee']);
 const ID = /^[a-z0-9]{6,16}$/;
 const OPTION = /^[a-z]{1,16}$/;
@@ -88,7 +92,7 @@ function join(ws, msg) {
   let room = rooms.get(name);
   if (!room) {
     if (rooms.size >= MAX_ROOMS) return ws.close(1013, 'busy');
-    room = { clients: new Set(), messages: [], votes: new Map(), seq: 0, idle: null };
+    room = { clients: new Set(), messages: [], votes: new Map(), seq: 0, idle: null, hold: null, holdBy: null, holdTimer: null };
     rooms.set(name, room);
   }
   clearTimeout(room.idle);
@@ -117,8 +121,20 @@ function join(ws, msg) {
     messages: room.messages,
     votes: tally(room),
     myVote: room.votes.get(ws.voter) ?? null,
+    hold: room.hold,
+    now: Date.now(),
   });
   broadcast(room, presence(room));
+}
+
+// ended: the hold stopped because the broadcast did, not because it resumed.
+function setHold(room, hold, { by = null, ended = false } = {}) {
+  clearTimeout(room.holdTimer);
+  room.holdTimer = null;
+  room.holdBy = hold ? by : null;
+  if (!hold && !room.hold) return;
+  room.hold = hold;
+  broadcast(room, hold ? { t: 'hold', hold, now: Date.now() } : { t: 'hold', hold: null, ended, now: Date.now() });
 }
 
 function leave(ws) {
@@ -126,6 +142,10 @@ function leave(ws) {
   if (!room) return;
   ws.room = null;
   room.clients.delete(ws);
+  if (room.holdBy === ws) {
+    room.holdBy = null;
+    room.holdTimer = setTimeout(() => setHold(room, null, { ended: true }), HOLD_GRACE);
+  }
   if (room.clients.size) {
     broadcast(room, presence(room));
   } else {
@@ -144,6 +164,7 @@ function startSession(name, id) {
   sessions.set(name, id);
   if (sessions.size > MAX_ROOMS) sessions.delete(sessions.keys().next().value);
   const room = rooms.get(name);
+  if (room) setHold(room, null, { ended: true });
   if (!room?.messages.length) return;
   room.messages = [];
   broadcast(room, { t: 'clear' });
@@ -189,6 +210,18 @@ const handlers = {
   host(ws, msg) {
     ws.host = Boolean(msg.on);
     if (ws.voice) broadcast(ws.room, presence(ws.room));
+  },
+
+  // The streamer's "be right back". Anyone can claim host in hello, so the
+  // channel owner's session token is checked here. The client sends how long
+  // ago the hold began, not a timestamp, so device clocks don't matter.
+  hold(ws, msg) {
+    const name = readToken(msg.token);
+    if (!name || roomOf(name) !== ws.roomName || !allow(ws)) return;
+    const room = ws.room;
+    if (!msg.on) return setHold(room, null, { ended: Boolean(msg.ended) });
+    const elapsed = Math.min(MAX_HOLD, Math.max(0, Number(msg.elapsed) || 0));
+    setHold(room, { since: room.hold?.since ?? Date.now() - elapsed, note: clean(msg.note, 80) }, { by: ws });
   },
 
   // { on: false } leaves the lounge; otherwise { mic, hand } is the new state.

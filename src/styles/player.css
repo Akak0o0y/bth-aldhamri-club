@@ -313,6 +313,74 @@
   }
 }
 
+/* Viewers: the streamer is on hold. Reactions (z 6) still float above it. */
+.hold-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: radial-gradient(60% 75% at 50% 40%, rgb(30 58 138 / 0.28), transparent 70%), #03050a;
+  animation: fade 500ms var(--ease-out) both;
+}
+.hold-screen h3 {
+  font-size: clamp(1.1rem, 2.6cqi, 1.6rem);
+}
+.hold-screen p {
+  max-width: 46ch;
+  font-size: 0.92rem;
+  color: var(--text-2);
+}
+.hold-screen .faint {
+  font-size: 0.8rem;
+}
+.hold-screen__icon {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  margin-bottom: 4px;
+  border-radius: 18px;
+  background: rgb(30 58 138 / 0.45);
+  border: 1px solid rgb(142 168 255 / 0.4);
+  color: var(--text);
+}
+
+/* Streamer: on hold, with Continue one tap away. */
+.hold-bar {
+  position: absolute;
+  z-index: 7;
+  inset-inline: 16px;
+  bottom: 76px;
+  margin-inline: auto;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  border-radius: var(--r-lg);
+  background: rgb(5 8 16 / 0.9);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow-2);
+  animation: rise 400ms var(--ease-out) both;
+}
+.hold-bar__text {
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+.hold-bar__actions {
+  display: flex;
+  gap: 8px;
+}
+
 .stage-msg,
 .offair {
   position: absolute;
@@ -401,8 +469,19 @@
 @container (max-width: 560px) {
   .offair__mark,
   .stage-msg__icon,
-  .offair p {
+  .offair p,
+  .hold-screen__icon,
+  .hold-screen .faint,
+  .hold-bar__text {
     display: none;
+  }
+  /* Clear of the control bar. */
+  .hold-screen {
+    gap: 6px;
+    padding-bottom: 56px;
+  }
+  .hold-bar {
+    bottom: 56px;
   }
   .player__name,
   .quick-react {

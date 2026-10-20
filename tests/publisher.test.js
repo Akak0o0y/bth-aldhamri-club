@@ -74,3 +74,56 @@ test('publisher serializes changes, recovers after rejection and discards update
     }
   }
 });
+
+test('held tracks swap on the open connection and survive a reconnect', async () => {
+  const saved = { peer: globalThis.RTCPeerConnection, window: globalThis.window, fetch: globalThis.fetch };
+  const peers = [];
+  const sdp = 'v=0\r\na=ice-ufrag:test\r\na=ice-pwd:test\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=rtpmap:96 H264/90000\r\n';
+  globalThis.window = {};
+  globalThis.RTCPeerConnection = class {
+    constructor() { this.added = []; this.replaced = []; peers.push(this); }
+    addTransceiver(trackOrKind) {
+      this.added.push(trackOrKind);
+      const sender = {
+        getParameters: () => ({ encodings: [{}] }),
+        async setParameters() {},
+        replaceTrack: async (track) => { this.replaced.push(track); },
+      };
+      return { sender };
+    }
+    async createOffer() { return { type: 'offer', sdp }; }
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    close() {}
+  };
+  globalThis.fetch = async (_url, init) => ({ ok: true, status: 200, headers: new Headers(init.method === 'POST' ? { Location: '/session/test' } : {}), text: async () => sdp });
+  const camera = { kind: 'video', id: 'camera' };
+  const mic = { kind: 'audio', id: 'mic' };
+  const card = { kind: 'video', id: 'card' };
+  const publisher = new WhipPublisher({
+    url: 'http://localhost/test/whip', stream: { getVideoTracks: () => [camera], getAudioTracks: () => [mic] },
+    videoKbps: 6000, fps: 30, contentHint: 'motion', codecId: 'h264', onStatus() {},
+  });
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
+  try {
+    publisher.start();
+    await settle();
+    assert.deepEqual(peers[0].added, [camera, mic]);
+    assert.equal(publisher.hasAudio, true);
+    await publisher.replaceTracks({ video: card, audio: null });
+    assert.deepEqual(peers[0].replaced, [card, null]);
+    // A network retry while holding keeps sending the card, with the audio
+    // slot still negotiated so the mic can come back without a new session.
+    publisher.stop();
+    publisher.start();
+    await settle();
+    assert.deepEqual(peers[1].added, [card, 'audio']);
+    assert.equal(publisher.hasAudio, true);
+  } finally {
+    publisher.stop();
+    for (const [key, value] of [['RTCPeerConnection', saved.peer], ['window', saved.window], ['fetch', saved.fetch]]) {
+      if (value === undefined) delete globalThis[key];
+      else globalThis[key] = value;
+    }
+  }
+});
