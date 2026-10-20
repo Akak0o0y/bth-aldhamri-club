@@ -1,0 +1,29 @@
+# Builds the iPhone/iPad broadcaster (ios/) on GitHub's macOS runners, since
+# the project is developed on Windows. Runs only when ios/ changes.
+name: iOS broadcaster
+
+on:
+  # Pushes to other branches are built through their pull request, once.
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  core-tests:
+    name: DhamriCore tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path ios/Packages/DhamriCore
+
+  simulator-build:
+    name: App + extension (iOS Simulator)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: sh ios/scripts/build-simulator.sh
