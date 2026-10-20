@@ -3,7 +3,9 @@
 name: iOS broadcaster
 
 on:
+  # Pushes to other branches are built through their pull request, once.
   push:
+    branches: [main]
     paths: ["ios/**", ".github/workflows/ios.yml"]
   pull_request:
     paths: ["ios/**", ".github/workflows/ios.yml"]
