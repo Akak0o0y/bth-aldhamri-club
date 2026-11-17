@@ -1,7 +1,7 @@
 import { isIP } from 'node:net';
 
 export const DEFAULT_SERVER = 'https://145-241-106-1.sslip.io';
-export const DEFAULT_RELAY = 'https://realtime-production-988e.up.railway.app';
+export const DEFAULT_RELAY = 'https://bth-aldhamri-realtime.onrender.com';
 export const WEBSITE = 'https://dhamri.vercel.app/';
 export const ENCODERS = { nvenc: 'h264_nvenc', qsv: 'h264_qsv', amf: 'h264_amf', software: 'libx264' };
 export const HEVC_ENCODERS = { nvenc: 'hevc_nvenc', qsv: 'hevc_qsv', amf: 'hevc_amf', software: 'libx265' };

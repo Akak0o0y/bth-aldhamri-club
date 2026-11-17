@@ -2,7 +2,7 @@
 // socket and the streamer-accounts API, so both read their address here.
 import { trustedRelay } from './trustedRelay';
 
-export const CLOUD_REALTIME_URL = 'wss://realtime-production-988e.up.railway.app';
+export const CLOUD_REALTIME_URL = 'wss://bth-aldhamri-realtime.onrender.com';
 
 // ?rt= overrides for testing, the build bakes in the deployed relay, a site on
 // any other host uses the cloud relay, and a local dev server uses this machine.
