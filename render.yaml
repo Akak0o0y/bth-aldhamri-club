@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: bth-aldhamri-realtime
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install --omit=dev
+    startCommand: node realtime.js
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: ADMIN_USER
+        value: majlis-host
+      - key: ADMIN_PASS
+        generateValue: true
