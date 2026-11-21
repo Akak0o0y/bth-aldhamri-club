@@ -207,9 +207,21 @@ export function revokeInvite(code) {
   return true;
 }
 
-// First boot: the owner account comes from ADMIN_USER / ADMIN_PASS.
+// First boot or config update: the owner account comes from ADMIN_USER / ADMIN_PASS.
+// Whenever ADMIN_PASS is set in the environment, ensure the owner password matches ADMIN_PASS.
 export async function seedAdmin(name, pass) {
-  if (!validName(name) || !validPass(pass) || Object.keys(db.users).length) return;
-  await createUser(name, pass);
-  console.log(`created the first account: ${name}`);
+  if (!validName(name) || !validPass(pass)) return;
+  const key = keyOf(name);
+  const existingOwner = Object.values(db.users).find((u) => u.by === null);
+  if (!existingOwner) {
+    await createUser(name, pass);
+    console.log(`created the first account: ${name}`);
+  } else {
+    const target = db.users[key] || existingOwner;
+    const salt = randomBytes(16).toString('base64');
+    const hash = await hashOf(pass, salt);
+    Object.assign(target, { salt, hash, since: Date.now() });
+    save();
+    console.log(`synced admin password for: ${target.name}`);
+  }
 }
