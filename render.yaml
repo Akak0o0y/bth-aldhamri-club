@@ -13,3 +13,5 @@ services:
         value: majlis-host
       - key: ADMIN_PASS
         generateValue: true
+      - key: MTX_AUTH_KEY
+        value: XdEZrhHJxBaxJgepHj3uaA2SyZDTJ55F
